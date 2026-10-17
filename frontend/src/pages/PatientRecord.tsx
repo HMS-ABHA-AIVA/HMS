@@ -11,6 +11,7 @@ import {
   type AbhaTransaction,
   type FullAbhaProfile,
 } from "@/api/endpoints";
+import { SAMPLE_PATIENTS, SAMPLE_TRANSACTIONS } from "@/data/samplePatients";
 
 function formatDateTime(dateStr?: string) {
   if (!dateStr) return "—";
@@ -63,6 +64,7 @@ export function PatientRecord() {
   const allergies: string[] = [];
   const problems: string[] = [];
 
+
   useEffect(() => {
     let active = true;
     let createdUrl = "";
@@ -72,17 +74,31 @@ export function PatientRecord() {
       setLoading(true);
 
       try {
-        // 1. Fetch patient list and transactions
-        const [patientsRes, txnsRes] = await Promise.all([
-          listPatients(),
-          listPatientTransactions(patientId).catch(() => ({ data: [] })),
-        ]);
+        let currentPatient: BackendPatientWithAbha | null = null;
+        let txns: AbhaTransaction[] = [];
+
+        try {
+          const [patientsRes, txnsRes] = await Promise.all([
+            listPatients(),
+            listPatientTransactions(patientId).catch(() => ({ data: [] })),
+          ]);
+          currentPatient = (patientsRes.data || []).find((p) => p.id === patientId) || null;
+          txns = Array.isArray(txnsRes.data) ? txnsRes.data : [];
+        } catch {
+          // If unauthenticated or backend empty, check demo sample data
+        }
+
+        if (!currentPatient) {
+          const sample = SAMPLE_PATIENTS.find((p) => p.id === patientId);
+          if (sample) {
+            currentPatient = sample;
+            txns = SAMPLE_TRANSACTIONS;
+          }
+        }
 
         if (!active) return;
-
-        const currentPatient = (patientsRes.data || []).find((p) => p.id === patientId) || null;
         setPatient(currentPatient);
-        setTransactions(Array.isArray(txnsRes.data) ? txnsRes.data : []);
+        setTransactions(txns);
 
         // 2. If ABHA is linked, try fetching live profile & live QR code
         if (currentPatient?.abha) {

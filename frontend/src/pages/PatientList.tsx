@@ -4,6 +4,7 @@ import { AppShell } from "../components/AppShell";
 import { listPatients, type BackendPatientWithAbha } from "@/api/endpoints";
 import { useAuthStore } from "@/store/useAuthStore";
 import { StopState } from "@/pages/ErrorStates";
+import { SAMPLE_PATIENTS } from "@/data/samplePatients";
 
 export interface PatientRow {
   id: string;
@@ -84,15 +85,38 @@ export function PatientList() {
   const staffEmail = session?.kind === "staff" ? session.email : "asha.verma@citygeneral.example";
   const envDisplay = environment === "PRODUCTION" ? "Production" : "Sandbox";
 
+
   useEffect(() => {
     let cancelled = false;
     async function fetchPatients() {
       setLoading(true);
       setError(null);
+      const isDemoSession =
+        (session?.kind === "staff" && session.id === "st7") ||
+        session?.email === "admin@hospital.com";
+
       try {
         const res = await listPatients();
         if (cancelled) return;
         const list = Array.isArray(res.data) ? res.data : [];
+        if (list.length === 0 && isDemoSession) {
+          setPatients(
+            SAMPLE_PATIENTS.map((p) => ({
+              id: p.id,
+              name: p.name,
+              mrn: p.mrn,
+              age: p.age,
+              sex: p.sex,
+              mobile: p.phone,
+              abha: p.abha ? "linked" : "not",
+              abhaNum: p.abha?.abhaNumber,
+              today: p.today,
+              raw: p,
+            }))
+          );
+          return;
+        }
+
         const rows: PatientRow[] = list.map((p) => {
           const isLinked = Boolean(p.abha?.abhaNumber);
           return {
@@ -111,7 +135,24 @@ export function PatientList() {
         setPatients(rows);
       } catch (err: any) {
         if (!cancelled) {
-          setError(err?.message || "Failed to load patients from the server.");
+          if (isDemoSession) {
+            setPatients(
+              SAMPLE_PATIENTS.map((p) => ({
+                id: p.id,
+                name: p.name,
+                mrn: p.mrn,
+                age: p.age,
+                sex: p.sex,
+                mobile: p.phone,
+                abha: p.abha ? "linked" : "not",
+                abhaNum: p.abha?.abhaNumber,
+                today: p.today,
+                raw: p,
+              }))
+            );
+          } else {
+            setError(err?.message || "Failed to load patients from the server.");
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -122,7 +163,7 @@ export function PatientList() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session]);
 
   const rows = useMemo(() => {
     return patients.filter((r) =>
