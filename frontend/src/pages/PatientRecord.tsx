@@ -56,13 +56,12 @@ export function PatientRecord() {
   const [patient, setPatient] = useState<BackendPatientWithAbha | null>(null);
   const [transactions, setTransactions] = useState<AbhaTransaction[]>([]);
   const [liveProfile, setLiveProfile] = useState<FullAbhaProfile | null>(null);
-  const [qrBlob, setQrBlob] = useState<Blob | null>(null);
   const [qrUrl, setQrUrl] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   // In-browser only (as documented until backend can store these)
-  const [allergies, setAllergies] = useState<string[]>([]);
-  const [problems, setProblems] = useState<string[]>([]);
+  const allergies: string[] = [];
+  const problems: string[] = [];
 
   useEffect(() => {
     let active = true;
@@ -99,7 +98,6 @@ export function PatientRecord() {
           try {
             const blob = await getAbhaQrCodeBlob();
             if (active && blob) {
-              setQrBlob(blob);
               createdUrl = URL.createObjectURL(blob);
               setQrUrl(createdUrl);
             }

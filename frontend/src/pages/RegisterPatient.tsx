@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -11,10 +11,11 @@ import {
   requestAbhaMobileOtp,
   confirmAbhaMobileOtp,
   verifyAbhaMobileUser,
-  type AbdmAccountItem,
+  type AbhaAccountItem,
 } from "@/api/endpoints";
 import { withAbdmSession } from "@/api/abdmSession";
-import { StopState, mapApiError, type MappedErrorState } from "@/pages/ErrorStates";
+import { StopState } from "@/pages/ErrorStates";
+import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 type AbhaMode = "create_aadhaar" | "link_aadhaar" | "link_mobile";
@@ -52,13 +53,6 @@ export function RegisterPatient() {
   // In-flight status and error handling
   const [loading, setLoading] = useState(false);
   const [errorState, setErrorState] = useState<MappedErrorState | null>(null);
-
-  useEffect(() => {
-    if (existingPatientId) {
-      setPatientId(existingPatientId);
-      setStep(2);
-    }
-  }, [existingPatientId]);
 
   // Step 1: Create patient
   async function handleSavePatient() {

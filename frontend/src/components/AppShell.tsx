@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 type Item = { key: string; label: string; demo?: boolean; group?: string };
 

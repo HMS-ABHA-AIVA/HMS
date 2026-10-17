@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { listPatients, type BackendPatientWithAbha } from "@/api/endpoints";
 import { useAuthStore } from "@/store/useAuthStore";
-import { mrnFor } from "@/lib/patientHelpers";
 import { StopState } from "@/pages/ErrorStates";
 
 export interface PatientRow {
