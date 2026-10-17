@@ -86,7 +86,7 @@ export const listPatientTransactions = (patientId: string) =>
 export const retrieveAbdmToken = (environment: AbdmEnvironment) => post<{ message: string }>('/abha/retrieve', { environment });
 
 export const requestAbhaCreateOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment }) =>
-  post<Envelope<{ txnId: string; transactionId: string }>>('/abha/create/request', body);
+  post<Envelope<{ txnId: string; transactionId: string }>>('/abha/create/aadhar/request', body);
 
 export interface AbhaProfile {
   abhaNumber: string;
@@ -98,10 +98,57 @@ export const verifyAbhaCreateOtp = (body: {
   otp: string;
   mobile: string;
   environment: AbdmEnvironment;
-}) => post<Envelope<AbhaProfile & { patientId: string; isNew: boolean }>>('/abha/create/verify', body);
+}) => post<Envelope<AbhaProfile & { patientId: string; isNew: boolean }>>('/abha/create/aadhar/verify', body);
 
 export const requestAbhaLinkOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment }) =>
-  post<Envelope<{ transactionId: string }>>('/abha/verify/request', body);
+  post<Envelope<{ transactionId: string }>>('/abha/verify/aadhar/request', body);
 
 export const confirmAbhaLink = (body: { transactionId: string; otp: string; environment: AbdmEnvironment }) =>
-  post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/confirm', body);
+  post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/aadhar/confirm', body);
+
+// Mobile verification flow (Step 1, Step 2, Step 3)
+export const requestAbhaMobileOtp = (body: { patientId: string; mobile: string; environment: AbdmEnvironment }) =>
+  post<Envelope<{ transactionId: string; txnId: string }>>('/abha/verify/mobile/request', body);
+
+export interface AbhaAccountItem {
+  ABHANumber: string;
+  preferredAbhaAddress?: string;
+  name?: string;
+  gender?: string;
+  dob?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+export const confirmAbhaMobileOtp = (body: { transactionId: string; otp: string; environment: AbdmEnvironment }) =>
+  post<Envelope<{ transactionId: string; txnId: string; token: string; accounts: AbhaAccountItem[] }>>('/abha/verify/mobile/confirm', body);
+
+export const verifyAbhaMobileUser = (body: { abhaNumber: string; transactionId: string; environment: AbdmEnvironment }) =>
+  post<Envelope<{
+    transactionId: string;
+    abhaNumber: string;
+    abhaAddress: string | null;
+    name?: string;
+    gender?: string;
+    dob?: string;
+    kycVerified?: boolean;
+  }>>('/abha/verify/mobile/user', body);
+
+// ABHA profile and live QR code
+export interface FullAbhaProfile {
+  ABHANumber?: string;
+  preferredAbhaAddress?: string;
+  name?: string;
+  gender?: string;
+  dob?: string;
+  address?: string;
+  kycVerified?: boolean;
+  [key: string]: unknown;
+}
+
+export const getAbhaProfile = (environment: AbdmEnvironment = 'SANDBOX') =>
+  get<Envelope<FullAbhaProfile>>(`/abha/profile?environment=${environment}`);
+
+import { getBlob } from '@/api/client';
+export const getAbhaQrCodeBlob = () => getBlob('/abha/profile/qr');
+

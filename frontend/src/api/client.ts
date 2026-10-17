@@ -53,3 +53,30 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 
 export const post = <T>(path: string, body?: unknown) => request<T>('POST', path, body);
 export const get = <T>(path: string) => request<T>('GET', path);
+
+export async function getBlob(path: string): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+  } catch {
+    throw new ApiError(0, 'Cannot reach the server. Check that the backend is running.');
+  }
+
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const message =
+      typeof payload?.message === 'string'
+        ? payload.message
+        : res.status >= 500
+          ? 'The server is unavailable. Check that the backend is running.'
+          : `Request failed (${res.status})`;
+    if (res.status === 401 && /unauthor/i.test(message)) onSessionExpired?.();
+    throw new ApiError(res.status, message);
+  }
+
+  return await res.blob();
+}
+
