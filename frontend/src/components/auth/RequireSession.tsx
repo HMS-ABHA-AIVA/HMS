@@ -1,11 +1,11 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
 
-// Login is temporarily bypassed for a UI preview: anyone can view the staff screens
-// without signing in. The hospital store already falls back to a demo staff member
-// when there's no session (see src/store/slices/session.ts), so pages render normally.
-// To bring login back, delete this block and restore the commented check below.
-const LOGIN_DISABLED_FOR_PREVIEW = true;
+// Login is configurable via VITE_LOGIN_DISABLED_FOR_PREVIEW in development,
+// and strictly enforced (always false) in production.
+const LOGIN_DISABLED_FOR_PREVIEW =
+  import.meta.env.MODE !== 'production' &&
+  import.meta.env.VITE_LOGIN_DISABLED_FOR_PREVIEW === 'true';
 
 /** Staff sessions use the HMIS screens; facility sessions only get facility setup. */
 export function RequireSession({ kind }: { kind: 'staff' | 'facility' }) {
