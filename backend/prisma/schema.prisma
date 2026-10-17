@@ -1,0 +1,164 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User{
+  id String @id @default(uuid())
+  name String
+  email String @unique
+  passwordHash String 
+  facilityId String
+  facility Facility @relation(fields: [facilityId], references: [id])
+  refreshTokens UserRefreshToken[]
+  // role 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// enum userRole{
+//   ADMIN
+//   RECEPTIONIST
+//   DOCTOR
+// }
+model UserRefreshToken {
+  id         String   @id @default(cuid())
+  tokenHash  String
+  userId     String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Facility {
+  id           String   @id @default(cuid())
+  name         String
+  hfrId        String   @unique
+  email        String   @unique
+  passwordHash String
+
+  patients     Patient[]
+  users        User[]
+  abdmData       FacilityAbdmData[]
+  refreshTokens FacilityRefreshToken[]
+  abhaTransactions AbhaTransaction[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+model FacilityRefreshToken {
+  id         String   @id @default(cuid())
+  tokenHash  String
+  facilityId String   
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+
+  @@index([facilityId])
+}
+model FacilityAbdmData {
+  id           String   @id @default(cuid())
+  facilityId   String   
+  clientId     String
+  clientSecret String
+  environment  AbdmEnvironment
+  facility     Facility @relation(fields: [facilityId], references: [id])
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([facilityId, environment])
+ 
+}
+
+enum AbdmEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
+
+model Patient {
+
+    id String @id @default(uuid())
+
+    name String
+    phone String
+    email String?
+
+    facilityId String
+
+    facility Facility @relation(fields: [facilityId], references: [id])
+
+    abha AbhaPatient?
+    abhaTransactions AbhaTransaction[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([facilityId])
+    @@index([phone])
+}
+
+model AbhaPatient {
+  id String @id @default(uuid())
+
+  patientId String @unique
+
+  abhaNumber String @unique
+  abhaAddress String?
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+model AbhaTransaction {
+  id String @id @default(uuid())
+
+  txnId String @unique
+
+  patientId String
+  facilityId String
+
+  purpose AbhaTransactionPurpose
+  status AbhaTransactionStatus
+
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+  facility Facility @relation(fields: [facilityId], references: [id])
+
+  @@index([patientId])
+  @@index([facilityId])
+}
+
+enum AbhaTransactionPurpose {
+  ENROLLMENT
+  VERIFICATION
+}
+
+enum AbhaTransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
