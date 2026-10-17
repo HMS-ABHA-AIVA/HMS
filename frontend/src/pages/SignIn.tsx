@@ -27,6 +27,36 @@ export function SignIn() {
     setLoading(true);
 
     try {
+      // Demo bypass credentials
+      const isDemo =
+        (email.trim().toLowerCase() === "admin@hospital.com" &&
+          (password === "password" || password === "admin123" || password === "demo")) ||
+        email.trim().toLowerCase() === "demo@example.com";
+
+      if (isDemo) {
+        if (tab === "staff") {
+          const demoStaffSession = {
+            kind: "staff" as const,
+            id: "st7",
+            name: "Asha Verma",
+            email: email.trim(),
+          };
+          useAuthStore.setState({ session: demoStaffSession });
+          navigate("/", { replace: true });
+          return;
+        } else {
+          const demoFacSession = {
+            kind: "facility" as const,
+            name: "City General Hospital",
+            email: email.trim(),
+            hfrId: "IN2410001234",
+          };
+          useAuthStore.setState({ session: demoFacSession });
+          navigate("/facility-setup", { replace: true });
+          return;
+        }
+      }
+
       if (isRegisteringFacility) {
         if (!facName.trim() || !email.trim() || !facHfrId.trim() || !password.trim()) {
           throw new Error("All fields are required to register a facility.");
@@ -175,6 +205,21 @@ export function SignIn() {
               <span>New hospital? <a onClick={() => { setIsRegisteringFacility(true); setError(null); }} style={{ cursor: "pointer" }}>Register a facility</a></span>
             )}
           </div>
+
+          {!isRegisteringFacility && (
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid var(--line)", fontSize: 12 }}>
+              <span style={{ color: "var(--text-dim)" }}>Demo bypass: </span>
+              <a
+                style={{ cursor: "pointer", fontWeight: 600 }}
+                onClick={() => {
+                  setEmail("admin@hospital.com");
+                  setPassword("password");
+                }}
+              >
+                Use admin@hospital.com / password
+              </a>
+            </div>
+          )}
         </form>
       </div>
     </div>
