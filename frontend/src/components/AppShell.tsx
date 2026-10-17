@@ -70,8 +70,9 @@ export function AppShell({
 // Owner shell for Facility setup (simpler nav)
 export function OwnerShell({
   facilityName = "City General Hospital",
+  onLogout,
   children,
-}: { facilityName?: string; children: ReactNode }) {
+}: { facilityName?: string; onLogout?: () => void; children: ReactNode }) {
   return (
     <div className="osh-app">
       <aside className="osh-sidebar">
@@ -83,6 +84,11 @@ export function OwnerShell({
           <div className="osh-nav-group">Facility</div>
           <a className="osh-nav-item active">Facility setup</a>
         </nav>
+        {onLogout && (
+          <div className="osh-side-foot">
+            <button className="osh-logout" onClick={onLogout}>Log out</button>
+          </div>
+        )}
       </aside>
       <main className="osh-main">{children}</main>
     </div>
