@@ -1,11 +1,118 @@
 import { prisma } from "../../../config/db.js";
 import { ApiError } from "../../../common/errors/appError.js";
 import { generateAbdmSessionToken } from "../../../common/client/facility.client.js";
-import { decrypt } from "../../../common/utils/encryption.js"
-import { encryptWithAbdmPublicKey } from "../../../common/utils/encryption.js";
-import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile,requestExistingAbhaMobileOtp,verifyExistingAbhaMobileOtp,verifyExistingAbhaMobileUser ,generateAbhaQr, ABHA_ENROLLMENT_CONSENT} from "../../../common/client/abdm.client.js";
+import { decrypt, encryptWithAbdmPublicKey } from "../../../common/utils/encryption.js";
+import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, ABHA_ENROLLMENT_CONSENT } from "../../../common/client/abdm.client.js";
 
-export const abdmTokenRetrievalService = async (facilityId: string, userId: string, environment: "SANDBOX" | "PRODUCTION") => {
+type Environment = "SANDBOX" | "PRODUCTION";
+
+const OTP_VALIDITY_MS = 10 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// shared helpers
+// ---------------------------------------------------------------------------
+
+// ABDM expects Aadhaar / mobile / OTP values encrypted with its current public key.
+const encryptForAbdm = async (environment: Environment, abdmAccessToken: string, value: string) => {
+  const { publicKey } = await getAbdmPublicKey(environment, abdmAccessToken);
+
+  if (!publicKey) {
+    throw new ApiError(502, "Failed to retrieve ABDM public key");
+  }
+
+  return encryptWithAbdmPublicKey(value, publicKey);
+};
+
+const findPatientInFacility = async (patientId: string, facilityId: string) => {
+  const patient = await prisma.patient.findFirst({
+    where: { id: patientId, facilityId },
+    include: { abha: true },
+  });
+
+  if (!patient) {
+    throw new ApiError(404, "Patient not found");
+  }
+
+  return patient;
+};
+
+// Loads a pending transaction and enforces facility, purpose, status and expiry.
+const loadPendingTransaction = async (transactionId: string, facilityId: string, purpose: "ENROLLMENT" | "VERIFICATION") => {
+  const transaction = await prisma.abhaTransaction.findUnique({
+    where: { id: transactionId },
+  });
+
+  if (!transaction) {
+    throw new ApiError(404, "ABHA transaction not found");
+  }
+
+  if (transaction.facilityId !== facilityId) {
+    throw new ApiError(403, "Transaction does not belong to this facility");
+  }
+
+  if (transaction.purpose !== purpose) {
+    throw new ApiError(400, "Invalid transaction purpose");
+  }
+
+  if (transaction.status !== "PENDING") {
+    throw new ApiError(400, `ABHA transaction is already ${transaction.status.toLowerCase()}`);
+  }
+
+  if (transaction.expiresAt <= new Date()) {
+    await prisma.abhaTransaction.update({
+      where: { id: transaction.id },
+      data: { status: "EXPIRED" },
+    });
+
+    throw new ApiError(400, "ABHA transaction has expired. Please request a new OTP.");
+  }
+
+  return transaction;
+};
+
+const setTransactionStatus = (id: string, status: "COMPLETED" | "FAILED", extra: Record<string, unknown> = {}) =>
+  prisma.abhaTransaction.update({ where: { id }, data: { status, ...extra } });
+
+// Links an ABHA to the patient, refusing to attach one ABHA to two patients.
+// ABDM has already authenticated the user at this point, so a conflict is recorded as FAILED.
+const linkAbhaToPatient = async (transactionId: string, patientId: string, abhaNumber: string, abhaAddress: string | null) => {
+  const existing = await prisma.abhaPatient.findUnique({ where: { abhaNumber } });
+
+  if (existing && existing.patientId !== patientId) {
+    await setTransactionStatus(transactionId, "FAILED");
+    throw new ApiError(409, "This ABHA is already linked to another patient");
+  }
+
+  const patientAbha = await prisma.abhaPatient.findUnique({ where: { patientId } });
+
+  if (patientAbha && patientAbha.abhaNumber !== abhaNumber) {
+    await setTransactionStatus(transactionId, "FAILED");
+    throw new ApiError(409, "Patient is already linked to a different ABHA");
+  }
+
+  return prisma.abhaPatient.upsert({
+    where: { patientId },
+    update: { abhaAddress },
+    create: { patientId, abhaNumber, abhaAddress },
+  });
+};
+
+// The X-token calls (profile / QR) answer 401 when the token is missing or stale.
+// That is an ABHA-session problem, not an ABDM-gateway one, so word it accordingly.
+const asAbhaSessionError = (error: unknown): never => {
+  if (error instanceof ApiError && error.statusCode === 401) {
+    throw new ApiError(401, "ABHA verification session expired");
+  }
+  throw error;
+};
+
+const digitsOnly = (value: string) => value.replace(/\D/g, "");
+
+// ---------------------------------------------------------------------------
+// ABDM gateway session
+// ---------------------------------------------------------------------------
+
+export const abdmTokenRetrievalService = async (facilityId: string, userId: string, environment: Environment) => {
   const user = await prisma.user.findUnique({
     where: {
       id: userId,
@@ -42,57 +149,29 @@ export const abdmTokenRetrievalService = async (facilityId: string, userId: stri
   }
 
   return {
-    abdmAccessToken: abdmResponse.accessToken,
-    abdmRefreshToken: abdmResponse.refreshToken
+    abdmAccessToken: abdmResponse.accessToken as string,
+    abdmRefreshToken: abdmResponse.refreshToken as string,
+    expiresIn: abdmResponse.expiresIn as number | undefined,
+    refreshExpiresIn: abdmResponse.refreshExpiresIn as number | undefined,
   };
 
 }
 
-//creation - aadhar number
-export const aadhaarOtpRequestService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: "SANDBOX" | "PRODUCTION", aadhaar: string) => {
+// ---------------------------------------------------------------------------
+// creation - aadhaar
+// ---------------------------------------------------------------------------
 
-  // 1. Make sure patient belongs to authenticated user's facility
-  const patient = await prisma.patient.findFirst({
-    where: {
-      id: patientId,
-      facilityId,
-    },
-    include:{
-      abha : true
-    }
-  });
+export const aadhaarOtpRequestService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string) => {
+  // Make sure patient belongs to authenticated user's facility
+  const patient = await findPatientInFacility(patientId, facilityId);
 
-  if (!patient) {
-    throw new ApiError(
-      404,
-      "Patient not found",
-    );
-  }
   if (patient.abha) {
-    throw new ApiError(
-      409,
-      "Patient already has an ABHA linked",
-    );
+    throw new ApiError(409, "Patient already has an ABHA linked");
   }
 
+  const encryptedAadhaar = await encryptForAbdm(environment, abdmAccessToken, aadhaar);
 
-  // 2. Get ABDM public key
-  const { publicKey } = await getAbdmPublicKey(environment, abdmAccessToken);
-
-  if (!publicKey) {
-    throw new ApiError(
-      500,
-      "Failed to retrieve ABDM public key",
-    );
-  }
-
-  // 3. Encrypt Aadhaar
-  const encryptedAadhaar = encryptWithAbdmPublicKey(
-    aadhaar,
-    publicKey,
-  );
-
-  // 4. Ask ABDM to send OTP
+  // Ask ABDM to send the OTP
   const abdmResponse = await requestAadhaarOtp({
     accessToken: abdmAccessToken,
     encryptedAadhaar,
@@ -100,13 +179,9 @@ export const aadhaarOtpRequestService = async (patientId: string, facilityId: st
   });
 
   if (!abdmResponse.txnId) {
-    throw new ApiError(
-      400,
-      "ABDM did not return a transaction ID",
-    );
+    throw new ApiError(502, "ABDM did not return a transaction ID");
   }
 
-  // 5. Store transaction
   const transaction = await prisma.abhaTransaction.create({
     data: {
       txnId: abdmResponse.txnId,
@@ -114,7 +189,7 @@ export const aadhaarOtpRequestService = async (patientId: string, facilityId: st
       facilityId,
       purpose: "ENROLLMENT",
       status: "PENDING",
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
     },
   });
 
@@ -126,81 +201,16 @@ export const aadhaarOtpRequestService = async (patientId: string, facilityId: st
 };
 
 
-export const aadhaarOtpVerifyService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: "SANDBOX" | "PRODUCTION", otp: string, mobile: string,) => {
+export const aadhaarOtpVerifyService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string, mobile: string) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "ENROLLMENT");
 
-  // 1. Find YOUR internal ABHA transaction
-  const transaction = await prisma.abhaTransaction.findUnique({
-    where: {
-      id: transactionId,
-    },
-  });
-
-  if (!transaction) {
-    throw new ApiError(
-      404,
-      "ABHA transaction not found",
-    );
+  const existingLink = await prisma.abhaPatient.findUnique({ where: { patientId: transaction.patientId } });
+  if (existingLink) {
+    throw new ApiError(409, "Patient already has an ABHA linked");
   }
 
-  //transaction should belong to authenticated faciity
-  if (transaction.facilityId !== facilityId) {
-    throw new ApiError(
-      403,
-      "Transaction does not belong to this facility",
-    );
-  }
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
 
-  // 3. Make sure this transaction is for enrollment
-  if (transaction.purpose !== "ENROLLMENT") {
-    throw new ApiError(
-      400,
-      "Invalid transaction purpose",
-    );
-  }
-
-  // 4. Make sure transaction is still pending
-  if (transaction.status !== "PENDING") {
-    throw new ApiError(
-      400,
-      "ABHA transaction is no longer pending",
-    );
-  }
-
-  // 5. Check expiry
-  if (transaction.expiresAt <= new Date()) {
-
-    await prisma.abhaTransaction.update({
-      where: {
-        id: transaction.id,
-      },
-      data: {
-        status: "EXPIRED",
-      },
-    });
-
-    throw new ApiError(
-      400,
-      "ABHA transaction has expired",
-    );
-  }
-
-  // 6. Get ABDM public key
-  const { publicKey } = await getAbdmPublicKey(environment, abdmAccessToken);
-
-  if (!publicKey) {
-    throw new ApiError(
-      500,
-      "Failed to retrieve ABDM public key",
-    );
-  }
-
-  // 7. Encrypt OTP using ABDM public key
-  const encryptedOtp = encryptWithAbdmPublicKey(
-    otp,
-    publicKey,
-  );
-
-  // 8. Call ABDM enrollment API
   const abdmResponse = await aadharCreationClient({
     accessToken: abdmAccessToken,
     txnId: transaction.txnId,
@@ -209,87 +219,49 @@ export const aadhaarOtpVerifyService = async (transactionId: string, facilityId:
     environment,
   });
 
-  // 9. Make sure ABDM actually returned an ABHA number
-  if (!abdmResponse?.ABHAProfile?.ABHANumber) {
-    throw new ApiError(
-      400,
-      "ABDM enrollment failed",
-    );
+  // Make sure ABDM actually returned an ABHA number
+  const abhaNumber = abdmResponse?.ABHAProfile?.ABHANumber as string | undefined;
+  if (!abhaNumber) {
+    throw new ApiError(502, "ABDM enrollment failed");
   }
 
-  // 10. Create ABHA ↔ Patient mapping
-  const abhaPatient = await prisma.abhaPatient.create({
-    data: {
-      patientId: transaction.patientId,
-      abhaNumber: abdmResponse.ABHAProfile.ABHANumber,
-      abhaAddress: abdmResponse.ABHAProfile.phrAddress?.[0] ?? null,
-    },
+  const abhaAddress: string | null =
+    abdmResponse.ABHAProfile.phrAddress?.[0] ?? abdmResponse.ABHAProfile.preferredAbhaAddress ?? null;
+
+  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, abhaAddress);
+
+  // Mark transaction as completed and persist the consent that was sent to ABDM
+  await setTransactionStatus(transaction.id, "COMPLETED", {
+    consentCode: ABHA_ENROLLMENT_CONSENT.code,
+    consentVersion: ABHA_ENROLLMENT_CONSENT.version,
+    consentAcceptedAt: new Date(),
   });
 
-  // 11. Mark transaction as completed and persist the consent that was sent to ABDM
-  await prisma.abhaTransaction.update({
-    where: {
-      id: transaction.id,
-    },
-    data: {
-      status: "COMPLETED",
-      consentCode: ABHA_ENROLLMENT_CONSENT.code,
-      consentVersion: ABHA_ENROLLMENT_CONSENT.version,
-      consentAcceptedAt: new Date(),
-    },
-  });
-
-  // 12. Return only what YOUR application needs
+  // Return only what the application needs (not the ABDM photo/address payload).
   return {
     patientId: transaction.patientId,
     abhaNumber: abhaPatient.abhaNumber,
     abhaAddress: abhaPatient.abhaAddress,
-    isNew: abdmResponse.isNew,
-    profile: abdmResponse.ABHAProfile,
+    isNew: Boolean(abdmResponse.isNew),
+    // Enrolment already authenticates the user; keep the X-token so the profile / QR work straight away.
+    xToken: (abdmResponse.tokens?.token as string | undefined) ?? null,
+    xTokenExpiresIn: abdmResponse.tokens?.expiresIn as number | undefined,
   };
 };
 
-//verification - aadbhar number
-export const requestExistingAbhaAadhaarOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: "SANDBOX" | "PRODUCTION", aadhaar: string) => {
-  const patient = await prisma.patient.findFirst({
-    where: {
-      id: patientId,
-      facilityId,
-    },
-  });
+// ---------------------------------------------------------------------------
+// verification (link existing ABHA) - aadhaar
+// ---------------------------------------------------------------------------
 
-  if (!patient) {
-    throw new ApiError(404, "Patient not found");
+export const requestExistingAbhaAadhaarOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string) => {
+  const patient = await findPatientInFacility(patientId, facilityId);
+
+  // Don't allow linking another ABHA if this patient is already linked.
+  if (patient.abha) {
+    throw new ApiError(409, "Patient is already linked to an ABHA");
   }
 
-  // Don't allow linking another ABHA if this patient
-  // is already linked.
-  const existingAbha = await prisma.abhaPatient.findUnique({
-    where: {
-      patientId,
-    },
-  });
-
-  if (existingAbha) {
-    throw new ApiError(
-      409,
-      "Patient is already linked to an ABHA"
-    );
-  }
-
-  const { publicKey } = await getAbdmPublicKey(environment, abdmAccessToken);
-
-  if (!publicKey) {
-    throw new ApiError(
-      500,
-      "Failed to retrieve ABDM public key"
-    );
-  }
-
-  const encryptedAadhaar = encryptWithAbdmPublicKey(
-    aadhaar,
-    publicKey
-  );
+  const encryptedAadhaar = await encryptForAbdm(environment, abdmAccessToken, aadhaar);
 
   const abdmResponse = await requestExistingAbhaAadhaarOtp({
     accessToken: abdmAccessToken,
@@ -298,10 +270,7 @@ export const requestExistingAbhaAadhaarOtpService = async (patientId: string, fa
   });
 
   if (!abdmResponse.txnId) {
-    throw new ApiError(
-      400,
-      "ABDM did not return a transaction ID"
-    );
+    throw new ApiError(502, "ABDM did not return a transaction ID");
   }
 
   const transaction = await prisma.abhaTransaction.create({
@@ -311,9 +280,7 @@ export const requestExistingAbhaAadhaarOtpService = async (patientId: string, fa
       facilityId,
       purpose: "VERIFICATION",
       status: "PENDING",
-      expiresAt: new Date(
-        Date.now() + 10 * 60 * 1000
-      ),
+      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
     },
   });
 
@@ -325,81 +292,16 @@ export const requestExistingAbhaAadhaarOtpService = async (patientId: string, fa
 };
 
 
-export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: "SANDBOX" | "PRODUCTION", otp: string) => {
-  const transaction = await prisma.abhaTransaction.findFirst({
-    where: {
-      id: transactionId,
-      facilityId,
-      purpose: "VERIFICATION",
-    },
-    include: {
-      patient: true,
-    },
-  });
+export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
 
-  if (!transaction) {
-    throw new ApiError(
-      404,
-      "ABHA verification transaction not found"
-    );
-  }
-
-  // Check transaction state
-  if (transaction.status !== "PENDING") {
-    throw new ApiError(
-      400,
-      `Transaction is already ${transaction.status.toLowerCase()}`
-    );
-  }
-
-  // Check expiry
-  if (transaction.expiresAt < new Date()) {
-    await prisma.abhaTransaction.update({
-      where: {
-        id: transaction.id,
-      },
-      data: {
-        status: "EXPIRED",
-      },
-    });
-
-    throw new ApiError(
-      400,
-      "ABHA verification transaction has expired"
-    );
-  }
-
-  // Make sure patient isn't already linked
-  const existingAbha = await prisma.abhaPatient.findUnique({
-    where: {
-      patientId: transaction.patientId,
-    },
-  });
-
+  const existingAbha = await prisma.abhaPatient.findUnique({ where: { patientId: transaction.patientId } });
   if (existingAbha) {
-    throw new ApiError(
-      409,
-      "Patient is already linked to an ABHA"
-    );
+    throw new ApiError(409, "Patient is already linked to an ABHA");
   }
 
-  // Get ABDM public key
-  const { publicKey } = await getAbdmPublicKey(environment, abdmAccessToken);
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
 
-  if (!publicKey) {
-    throw new ApiError(
-      500,
-      "Failed to retrieve ABDM public key"
-    );
-  }
-
-  // Encrypt OTP
-  const encryptedOtp = encryptWithAbdmPublicKey(
-    otp,
-    publicKey
-  );
-
-  // Verify OTP with ABDM
   const abdmResponse = await verifyExistingAbhaAadhaarOtp({
     accessToken: abdmAccessToken,
     txnId: transaction.txnId,
@@ -407,352 +309,188 @@ export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string,
     environment,
   });
 
-  // Make sure ABDM actually verified it
   if (abdmResponse.authResult !== "success") {
-    throw new ApiError(
-      400,
-      abdmResponse.message || "ABHA verification failed"
-    );
+    throw new ApiError(400, abdmResponse.message || "ABHA verification failed");
   }
 
-  // ABDM returns the X-token after successful authentication
   if (!abdmResponse.token) {
-    throw new ApiError(
-      400,
-      "ABDM authentication succeeded but no X-token was returned"
-    );
+    throw new ApiError(502, "ABDM authentication succeeded but no token was returned");
   }
-  // Get ABHA profile
+
+  // ABDM returns a T-token plus the ABHA account list. The profile / QR APIs need an X-token,
+  // which is issued by "verify user" for the chosen ABHA.
+  const accounts = abdmResponse.accounts ?? [];
+  let xToken = abdmResponse.token;
+  let expiresIn: number | undefined = abdmResponse.expiresIn;
+
+  if (accounts.length > 1) {
+    throw new ApiError(409, "Multiple ABHA accounts exist for this Aadhaar. Use mobile-number linking to choose one.");
+  }
+
+  if (accounts.length === 1) {
+    const verifiedUser = await verifyExistingAbhaUser(
+      environment,
+      abdmAccessToken,
+      abdmResponse.token,
+      accounts[0]!.ABHANumber,
+      transaction.txnId,
+    );
+
+    if (!verifiedUser?.token) {
+      throw new ApiError(502, "ABDM verification succeeded but no session token was returned");
+    }
+
+    xToken = verifiedUser.token;
+    expiresIn = verifiedUser.expiresIn;
+  }
+
   const profile = await getExistingAbhaProfile({
     accessToken: abdmAccessToken,
-    xToken: abdmResponse.token,
+    xToken,
     environment,
-  });
+  }).catch(asAbhaSessionError);
 
   if (!profile?.ABHANumber) {
-    throw new ApiError(
-      400,
-      "ABDM profile did not contain an ABHA number"
-    );
+    throw new ApiError(502, "ABDM profile did not contain an ABHA number");
   }
-  // Link ABHA to the patient
-  const abhaPatient = await prisma.abhaPatient.create({
-    data: {
-      patientId: transaction.patientId,
-      abhaNumber: profile.ABHANumber,
-      abhaAddress: profile.preferredAbhaAddress ?? null,
-    },
-  });
 
-  // Mark transaction as completed
-  await prisma.abhaTransaction.update({
-    where: {
-      id: transaction.id,
-    },
-    data: {
-      status: "COMPLETED",
-    },
-  });
+  const abhaPatient = await linkAbhaToPatient(
+    transaction.id,
+    transaction.patientId,
+    profile.ABHANumber,
+    profile.preferredAbhaAddress ?? null,
+  );
+
+  await setTransactionStatus(transaction.id, "COMPLETED");
 
   return {
     patientId: transaction.patientId,
     transactionId: transaction.id,
-    txnId: abdmResponse.txnId,
     message: abdmResponse.message,
     abhaNumber: abhaPatient.abhaNumber,
     abhaAddress: abhaPatient.abhaAddress,
-    token : abdmResponse.token,
-    
-
+    token: xToken,
+    expiresIn,
   };
 };
 
-//verfication - mobile number
+// ---------------------------------------------------------------------------
+// verification (link existing ABHA) - mobile number
+// ---------------------------------------------------------------------------
+
 //step 1 - request otp
-export const requestExistingAbhaMobileOtpService = async (patientId: string,facilityId: string,abdmAccessToken: string,environment: "SANDBOX" | "PRODUCTION",mobile: string,) => {
-    const patient = await prisma.patient.findFirst({
-        where: {
-            id: patientId,
-            facilityId,
-        },
-        include: {
-            abha: true,
-        },
-    });
+export const requestExistingAbhaMobileOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, mobile: string) => {
+  const patient = await findPatientInFacility(patientId, facilityId);
 
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
+  if (patient.abha) {
+    throw new ApiError(409, "Patient is already linked to an ABHA");
+  }
 
-    // if (patient.abha) {
-    //     throw new ApiError(
-    //         409,
-    //         "ABHA is already linked to this patient"
-    //     );
-    // }
+  const encryptedMobile = await encryptForAbdm(environment, abdmAccessToken, mobile);
 
-    const { publicKey } = await getAbdmPublicKey(
-        environment,
-        abdmAccessToken
-    );
+  const abdmResponse = await requestExistingAbhaMobileOtp(environment, abdmAccessToken, encryptedMobile);
 
-    const encryptedMobile = encryptWithAbdmPublicKey(
-        mobile,
-        publicKey
-    );
+  if (!abdmResponse?.txnId) {
+    throw new ApiError(502, "ABDM did not return a transaction ID");
+  }
 
-    const abdmResponse = await requestExistingAbhaMobileOtp(
-        environment,
-        abdmAccessToken,
-        encryptedMobile
-    );
-
-    if (!abdmResponse?.txnId) {
-        throw new ApiError(
-            502,
-            "ABDM did not return a transaction ID"
-        );
-    }
-
-    const transaction = await prisma.abhaTransaction.create({
-        data: {
-            txnId: abdmResponse.txnId,
-            patientId,
-            facilityId,
-            purpose: "VERIFICATION",
-            status: "PENDING",
-            expiresAt: new Date(
-                Date.now() + 10 * 60 * 1000
-            ),
-        },
-    });
-
-    return {
-        transactionId: transaction.id,
-        txnId: abdmResponse.txnId,
-        message: abdmResponse.message,
-    };
-};
-//step 2 - verify otp
-export const verifyExistingAbhaMobileOtpService = async (transactionId: string,facilityId: string,abdmAccessToken: string,environment: "SANDBOX" | "PRODUCTION",otp: string) => {
-    const transaction = await prisma.abhaTransaction.findFirst({
-        where: {
-            id: transactionId,
-            facilityId,
-        },
-    });
-
-    if (!transaction) {
-        throw new ApiError(404, "Transaction not found");
-    }
-
-    if (transaction.purpose !== "VERIFICATION") {
-        throw new ApiError(400, "Invalid transaction purpose");
-    }
-
-    if (transaction.status !== "PENDING") {
-        throw new ApiError(400, "Transaction is no longer active");
-    }
-
-    if (transaction.expiresAt < new Date()) {
-        await prisma.abhaTransaction.update({
-            where: {
-                id: transaction.id,
-            },
-            data: {
-                status: "EXPIRED",
-            },
-        });
-
-        throw new ApiError(400, "Transaction has expired");
-    }
-
-    const { publicKey } = await getAbdmPublicKey(
-        environment,
-        abdmAccessToken
-    );
-
-    const encryptedOtp = encryptWithAbdmPublicKey(
-        otp,
-        publicKey
-    );
-
-    const abdmResponse = await verifyExistingAbhaMobileOtp(
-        environment,
-        abdmAccessToken,
-        transaction.txnId,
-        encryptedOtp
-    );
-
-    if (abdmResponse?.authResult !== "success") {
-        throw new ApiError(
-            400,
-            abdmResponse?.message || "OTP verification failed"
-        );
-    }
-
-    if (!abdmResponse?.token) {
-        throw new ApiError(
-            502,
-            "ABDM did not return the authentication token"
-        );
-    }
-
-    if (!abdmResponse?.accounts?.length) {
-        throw new ApiError(
-            404,
-            "No ABHA accounts found for this mobile number"
-        );
-    }
-
-    return {
-        transactionId: transaction.id,
-        txnId: abdmResponse.txnId,
-        token: abdmResponse.token,
-        expiresIn: abdmResponse.expiresIn,
-        accounts: abdmResponse.accounts,
-        message: abdmResponse.message,
-    };
-};
-//step 3 - verify user and link internally
-export const verifyExistingAbhaMobileUserService = async (abhaNumber: string,transactionId: string,facilityId: string,abdmAccessToken: string,environment: "SANDBOX" | "PRODUCTION",tToken: string) => {
-  const transaction = await prisma.abhaTransaction.findFirst({
-    where: {
-      id: transactionId,
+  const transaction = await prisma.abhaTransaction.create({
+    data: {
+      txnId: abdmResponse.txnId,
+      patientId,
       facilityId,
       purpose: "VERIFICATION",
-    },
-    include: {
-      patient: true,
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
     },
   });
 
-  if (!transaction) {
-    throw new ApiError(
-      404,
-      "ABHA verification transaction not found"
-    );
+  return {
+    transactionId: transaction.id,
+    txnId: abdmResponse.txnId,
+    message: abdmResponse.message,
+  };
+};
+
+//step 2 - verify otp
+export const verifyExistingAbhaMobileOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
+
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
+
+  const abdmResponse = await verifyExistingAbhaMobileOtp(environment, abdmAccessToken, transaction.txnId, encryptedOtp);
+
+  if (abdmResponse?.authResult !== "success") {
+    throw new ApiError(400, abdmResponse?.message || "OTP verification failed");
   }
-
-  // Check transaction state
-  if (transaction.status !== "PENDING") {
-    throw new ApiError(
-      400,
-      `Transaction is already ${transaction.status.toLowerCase()}`
-    );
-  }
-
-  // Check expiry
-  if (transaction.expiresAt < new Date()) {
-    await prisma.abhaTransaction.update({
-      where: {
-        id: transaction.id,
-      },
-      data: {
-        status: "EXPIRED",
-      },
-    });
-
-    throw new ApiError(
-      400,
-      "ABHA verification transaction has expired"
-    );
-  }
-
-  // Get ABDM public key
-  const { publicKey } = await getAbdmPublicKey(
-    environment,
-    abdmAccessToken
-  );
-
-  if (!publicKey) {
-    throw new ApiError(
-      500,
-      "Failed to retrieve ABDM public key"
-    );
-  }
-
-  // Step 3: Verify user (ABHA number is sent as returned in the account list; no encryption needed)
-  const abdmResponse = await verifyExistingAbhaMobileUser(
-  environment,
-  abdmAccessToken,
-  tToken,
-  abhaNumber,
-  transaction.txnId
-);
 
   if (!abdmResponse?.token) {
-    throw new ApiError(
-      400,
-      "ABDM verification succeeded but no session token was returned"
-    );
+    throw new ApiError(502, "ABDM did not return the authentication token");
   }
 
-  // Step 3 generates the final ABHA session token
-  const xToken = abdmResponse.token;
+  if (!abdmResponse?.accounts?.length) {
+    throw new ApiError(404, "No ABHA accounts found for this mobile number");
+  }
+
+  return {
+    transactionId: transaction.id,
+    txnId: abdmResponse.txnId,
+    token: abdmResponse.token as string,
+    expiresIn: abdmResponse.expiresIn as number | undefined,
+    accounts: abdmResponse.accounts,
+    message: abdmResponse.message,
+  };
+};
+
+//step 3 - verify user and link internally
+export const verifyExistingAbhaMobileUserService = async (abhaNumber: string, transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, tToken: string) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
+
+  const existingAbha = await prisma.abhaPatient.findUnique({ where: { patientId: transaction.patientId } });
+  if (existingAbha) {
+    throw new ApiError(409, "Patient is already linked to an ABHA");
+  }
+
+  const abdmResponse = await verifyExistingAbhaUser(
+    environment,
+    abdmAccessToken,
+    tToken,
+    abhaNumber,
+    transaction.txnId,
+  );
+
+  if (!abdmResponse?.token) {
+    throw new ApiError(502, "ABDM verification succeeded but no session token was returned");
+  }
+
+  // Step 3 generates the final ABHA session (X-token)
+  const xToken = abdmResponse.token as string;
 
   // Get authoritative ABHA profile using the generated session
   const profile = await getExistingAbhaProfile({
     accessToken: abdmAccessToken,
     xToken,
     environment,
-  });
+  }).catch(asAbhaSessionError);
 
   if (!profile?.ABHANumber) {
-    throw new ApiError(
-      400,
-      "ABDM profile did not contain an ABHA number"
-    );
+    throw new ApiError(502, "ABDM profile did not contain an ABHA number");
   }
 
-  // Make sure this ABHA isn't already linked to another patient
-  const existingAbha = await prisma.abhaPatient.findUnique({
-    where: {
-      abhaNumber: profile.ABHANumber,
-    },
-  });
+  const abhaPatient = await linkAbhaToPatient(
+    transaction.id,
+    transaction.patientId,
+    profile.ABHANumber,
+    profile.preferredAbhaAddress ?? null,
+  );
 
-  if (existingAbha && existingAbha.patientId !== transaction.patientId) {
-    throw new ApiError(
-      409,
-      "This ABHA is already linked to another patient"
-    );
-  }
-
-  // Create or update the ABHA link
-  const abhaPatient = await prisma.abhaPatient.upsert({
-    where: {
-      patientId: transaction.patientId,
-    },
-    update: {
-      abhaNumber: profile.ABHANumber,
-      abhaAddress: profile.preferredAbhaAddress ?? null,
-    },
-    create: {
-      patientId: transaction.patientId,
-      abhaNumber: profile.ABHANumber,
-      abhaAddress: profile.preferredAbhaAddress ?? null,
-    },
-  });
-
-  // Mark transaction as completed
-  await prisma.abhaTransaction.update({
-    where: {
-      id: transaction.id,
-    },
-    data: {
-      status: "COMPLETED",
-    },
-  });
+  await setTransactionStatus(transaction.id, "COMPLETED");
 
   return {
     patientId: transaction.patientId,
     transactionId: transaction.id,
-    txnId: abdmResponse.txnId,
-    token: abdmResponse.token,
-    refreshToken: abdmResponse.refreshToken,
-    expiresIn: abdmResponse.expiresIn,
-    refreshExpiresIn: abdmResponse.refreshExpiresIn,
+    token: xToken,
+    expiresIn: abdmResponse.expiresIn as number | undefined,
     message: "ABHA verified and linked successfully",
 
     abhaNumber: abhaPatient.abhaNumber,
@@ -765,35 +503,41 @@ export const verifyExistingAbhaMobileUserService = async (abhaNumber: string,tra
   };
 };
 
+// ---------------------------------------------------------------------------
+// profile + QR (X-token is bound to one patient, see abdmCookies.ts)
+// ---------------------------------------------------------------------------
+
+const requireLinkedAbha = async (patientId: string, facilityId: string) => {
+  const patient = await findPatientInFacility(patientId, facilityId);
+
+  if (!patient.abha) {
+    throw new ApiError(404, "This patient has no ABHA linked");
+  }
+
+  return patient.abha;
+};
 
 //generate QR code
-export const generateAbhaQrService = async (facilityId: string,abdmAccessToken: string,abhaXToken: string,environment: "SANDBOX" | "PRODUCTION") => {
+export const generateAbhaQrService = async (patientId: string, facilityId: string, abdmAccessToken: string, abhaXToken: string, environment: Environment) => {
+  await requireLinkedAbha(patientId, facilityId);
 
-  const result = await generateAbhaQr({accessToken: abdmAccessToken,xToken: abhaXToken,environment});
-
-  return result;
+  return generateAbhaQr({ accessToken: abdmAccessToken, xToken: abhaXToken, environment }).catch(asAbhaSessionError);
 };
 
 //GET abha profile
-//get ABHA profile
+export const getAbhaProfileService = async (patientId: string, facilityId: string, accessToken: string, xToken: string, environment: Environment) => {
+  const linked = await requireLinkedAbha(patientId, facilityId);
 
-export const getAbhaProfileService = async (facilityId: string,accessToken: string,xToken: string,environment: "SANDBOX" | "PRODUCTION") => {
-
-  const profile = await getExistingAbhaProfile(
-   { accessToken,
-    xToken,
-    environment}
-  );
+  const profile = await getExistingAbhaProfile({ accessToken, xToken, environment }).catch(asAbhaSessionError);
 
   if (!profile?.ABHANumber) {
+    throw new ApiError(502, "ABDM profile did not contain an ABHA number");
+  }
 
-    throw new ApiError(
-      400,
-      "ABDM profile did not contain an ABHA number"
-    );
-
+  // Never show a profile that belongs to a different ABHA than the one linked to this patient.
+  if (digitsOnly(profile.ABHANumber) !== digitsOnly(linked.abhaNumber)) {
+    throw new ApiError(401, "ABHA verification session expired");
   }
 
   return profile;
-
 };

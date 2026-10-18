@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   createPatient,
+  listPatients,
   requestAbhaCreateOtp,
   verifyAbhaCreateOtp,
   requestAbhaLinkOtp,
@@ -16,7 +17,9 @@ import {
 import { withAbdmSession } from "@/api/abdmSession";
 import { StopState } from "@/pages/ErrorStates";
 import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
-import { SAMPLE_PATIENTS } from "@/data/samplePatients";
+
+// ABDM allows a new OTP for the same number only after about 30 seconds.
+const OTP_RESEND_SECONDS = 30;
 
 type Step = 1 | 2 | 3 | 4 | 5;
 type AbhaMode = "create_aadhaar" | "link_aadhaar" | "link_mobile";
@@ -55,8 +58,31 @@ export function RegisterPatient() {
   const [loading, setLoading] = useState(false);
   const [errorState, setErrorState] = useState<MappedErrorState | null>(null);
 
-  // isDemoSession is ONLY the in-memory fake session (id=st7), NOT real backend accounts.
-  const isDemoSession = session?.kind === "staff" && session.id === "st7";
+  const [resendIn, setResendIn] = useState(0);
+
+  // Counts down the OTP resend cool-down.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
+
+  // "Add ABHA" on an existing patient skips step 1, so pick up the mobile number from their record.
+  useEffect(() => {
+    if (!existingPatientId) return;
+    let cancelled = false;
+    listPatients()
+      .then((res) => {
+        const p = (res.data || []).find((x) => x.id === existingPatientId);
+        if (!cancelled && p) setLinkMobileNumber((current) => current || p.phone);
+      })
+      .catch(() => {
+        // the mobile number can still be typed in on the next step
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [existingPatientId]);
 
   // Step 1: Create patient
   async function handleSavePatient() {
@@ -73,34 +99,12 @@ export function RegisterPatient() {
 
     setLoading(true);
     try {
-      let createdId = "";
-      try {
-        const res = await createPatient({
-          name: form.name.trim(),
-          phone: cleanMobile,
-          email: form.email.trim() || undefined,
-        });
-        createdId = res.data.id;
-      } catch (err: any) {
-        if (isDemoSession || err?.status === 401) {
-          createdId = "pat_" + Date.now();
-          SAMPLE_PATIENTS.unshift({
-            id: createdId,
-            name: form.name.trim(),
-            mrn: "MRN-" + Math.floor(1000 + Math.random() * 9000),
-            age: Number(form.age) || 25,
-            sex: form.gender === "Female" ? "F" : "M",
-            phone: "+91 " + cleanMobile,
-            email: form.email.trim() || null,
-            facilityId: "fac_1",
-            createdAt: new Date().toISOString(),
-            abha: null,
-            today: "New registration",
-          });
-        } else {
-          throw err;
-        }
-      }
+      const res = await createPatient({
+        name: form.name.trim(),
+        phone: cleanMobile,
+        email: form.email.trim() || undefined,
+      });
+      const createdId = res.data.id;
       setPatientId(createdId);
       setLinkMobileNumber(cleanMobile);
       setStep(2);
@@ -133,9 +137,11 @@ export function RegisterPatient() {
         });
         return;
       }
-    } else if (mode === "link_mobile") {
-      const cleanMobile = (linkMobileNumber || form.mobile).replace(/\D/g, "");
-      if (cleanMobile.length !== 10) {
+    }
+
+    // The mobile number is what ABHA is linked to (create) or searched by (link by mobile).
+    if (mode === "create_aadhaar" || mode === "link_mobile") {
+      if (linkMobileNumber.replace(/\D/g, "").length !== 10) {
         setErrorState({
           tone: "error",
           title: "Invalid mobile number",
@@ -147,30 +153,8 @@ export function RegisterPatient() {
 
     setLoading(true);
     try {
-      await withAbdmSession(environment, async () => {
-        if (mode === "create_aadhaar") {
-          const res = await requestAbhaCreateOtp({
-            patientId,
-            aadhaar: aadhaar.replace(/\D/g, ""),
-            environment,
-          });
-          setTransactionId(res.data.transactionId);
-        } else if (mode === "link_aadhaar") {
-          const res = await requestAbhaLinkOtp({
-            patientId,
-            aadhaar: aadhaar.replace(/\D/g, ""),
-            environment,
-          });
-          setTransactionId(res.data.transactionId);
-        } else if (mode === "link_mobile") {
-          const res = await requestAbhaMobileOtp({
-            patientId,
-            mobile: (linkMobileNumber || form.mobile).replace(/\D/g, ""),
-            environment,
-          });
-          setTransactionId(res.data.transactionId);
-        }
-      });
+      await requestOtp();
+      setOtp("");
       setStep(4);
     } catch (err) {
       setErrorState(mapApiError(err, { label: "Try again", onClick: () => setErrorState(null) }));
@@ -179,9 +163,67 @@ export function RegisterPatient() {
     }
   }
 
+  // Asks ABDM for an OTP for the current mode and remembers the transaction it belongs to.
+  async function requestOtp() {
+    await withAbdmSession(environment, async () => {
+      const cleanAadhaar = aadhaar.replace(/\D/g, "");
+      const cleanMobile = linkMobileNumber.replace(/\D/g, "");
+      const res =
+        mode === "create_aadhaar"
+          ? await requestAbhaCreateOtp({ patientId, aadhaar: cleanAadhaar, environment })
+          : mode === "link_aadhaar"
+            ? await requestAbhaLinkOtp({ patientId, aadhaar: cleanAadhaar, environment })
+            : await requestAbhaMobileOtp({ patientId, mobile: cleanMobile, environment });
+      setTransactionId(res.data.transactionId);
+    });
+    setResendIn(OTP_RESEND_SECONDS);
+  }
+
+  async function handleResendOtp() {
+    setErrorState(null);
+    setLoading(true);
+    try {
+      await requestOtp();
+      setOtp("");
+    } catch (err) {
+      setErrorState(mapApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // Step 4: Verify OTP
   async function handleVerifyOtp() {
     setErrorState(null);
+
+    // If mobile accounts have already been loaded, proceed with user selection
+    if (mode === "link_mobile" && mobileAccounts.length > 0) {
+      if (!selectedAbhaNumber) {
+        setErrorState({
+          tone: "error",
+          title: "Select an ABHA account",
+          body: "Please choose which ABHA account to link to this patient.",
+        });
+        return;
+      }
+      setLoading(true);
+      try {
+        await withAbdmSession(environment, async () => {
+          await verifyAbhaMobileUser({
+            abhaNumber: selectedAbhaNumber,
+            transactionId,
+            environment,
+          });
+        });
+        setStep(5);
+      } catch (err) {
+        setErrorState(mapApiError(err, { label: "Try again", onClick: () => setErrorState(null) }));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     const cleanOtp = otp.replace(/\D/g, "");
     if (cleanOtp.length !== 6) {
       setErrorState({
@@ -196,7 +238,7 @@ export function RegisterPatient() {
     try {
       await withAbdmSession(environment, async () => {
         if (mode === "create_aadhaar") {
-          const mobileForEnrol = (form.mobile || linkMobileNumber).replace(/\D/g, "");
+          const mobileForEnrol = linkMobileNumber.replace(/\D/g, "");
           await verifyAbhaCreateOtp({
             transactionId,
             otp: cleanOtp,
@@ -212,23 +254,6 @@ export function RegisterPatient() {
           });
           setStep(5);
         } else if (mode === "link_mobile") {
-          // If accounts already retrieved and user selected one:
-          if (mobileAccounts.length > 0) {
-            if (!selectedAbhaNumber) {
-              setErrorState({
-                tone: "error",
-                title: "Select an ABHA account",
-                body: "Please choose which ABHA account to link to this patient.",
-              });
-              return;
-            }
-            await verifyAbhaMobileUser({
-              abhaNumber: selectedAbhaNumber,
-              transactionId,
-              environment,
-            });
-            setStep(5);
-          } else {
             // Confirm OTP and retrieve linked accounts
             const res = await confirmAbhaMobileOtp({
               transactionId,
@@ -250,7 +275,6 @@ export function RegisterPatient() {
             } else {
               throw new Error("No ABHA accounts associated with this mobile number.");
             }
-          }
         }
       });
     } catch (err) {
@@ -289,20 +313,24 @@ export function RegisterPatient() {
         <ol className="steps">
           <li className={step === 1 ? "current" : "done"}>
             <span className="num">1</span>
-            <span>
+            <div className="step-text">
               <span className="lbl">Patient details</span>
               {step === 1 && <div className="state">In progress</div>}
-            </span>
+            </div>
           </li>
           <li className={step === 2 || step === 3 || step === 4 ? "current" : step > 4 ? "done" : ""}>
             <span className="num">2</span>
-            <span className="lbl">ABHA</span>
-            {(step === 2 || step === 3 || step === 4) && <div className="state">In progress</div>}
+            <div className="step-text">
+              <span className="lbl">ABHA</span>
+              {(step === 2 || step === 3 || step === 4) && <div className="state">In progress</div>}
+            </div>
           </li>
           <li className={step === 5 ? "current" : ""}>
             <span className="num">3</span>
-            <span className="lbl">OPD check-in</span>
-            {step === 5 && <div className="state">Complete</div>}
+            <div className="step-text">
+              <span className="lbl">OPD check-in</span>
+              {step === 5 && <div className="state">Complete</div>}
+            </div>
           </li>
         </ol>
 
@@ -448,7 +476,9 @@ export function RegisterPatient() {
 
         {step === 3 && (
           <div className="card-form">
-            <h2>{mode === "link_mobile" ? "Mobile number" : "Aadhaar number"}</h2>
+            <h2>
+              {mode === "link_mobile" ? "Mobile number" : mode === "create_aadhaar" ? "Aadhaar and mobile number" : "Aadhaar number"}
+            </h2>
             <p className="lead">
               {mode === "link_mobile"
                 ? "An OTP will be sent to this mobile number registered with ABHA."
@@ -459,31 +489,37 @@ export function RegisterPatient() {
                 <StopState {...errorState} />
               </div>
             )}
-            {mode === "link_mobile" ? (
-              <div className="field">
-                <label>Mobile number</label>
-                <div className="mobile-wrap">
-                  <span className="mobile-prefix">+91</span>
-                  <input
-                    className="input mono"
-                    placeholder="10 digits"
-                    value={linkMobileNumber || form.mobile}
-                    onChange={(e) => setLinkMobileNumber(e.target.value)}
-                    disabled={loading}
-                  />
-                </div>
-              </div>
-            ) : (
+            {mode !== "link_mobile" && (
               <div className="field">
                 <label>Aadhaar number</label>
                 <input
                   className="input mono"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
                   placeholder="12 digits"
                   value={aadhaar}
-                  onChange={(e) => setAadhaar(e.target.value)}
+                  onChange={(e) => setAadhaar(e.target.value.replace(/\D/g, "").slice(0, 12))}
                   disabled={loading}
                   maxLength={12}
                 />
+                <div className="hint">Hidden as you type. It is sent to ABDM encrypted and is not stored here.</div>
+              </div>
+            )}
+            {mode !== "link_aadhaar" && (
+              <div className="field">
+                <label>{mode === "create_aadhaar" ? "Mobile number to link with the new ABHA" : "Mobile number"}</label>
+                <div className="mobile-wrap">
+                  <span className="mobile-prefix">+91</span>
+                  <input
+                    className="input mono"
+                    inputMode="numeric"
+                    placeholder="10 digits"
+                    value={linkMobileNumber}
+                    onChange={(e) => setLinkMobileNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                    disabled={loading}
+                  />
+                </div>
               </div>
             )}
             <label style={{ display: "flex", gap: 8, fontSize: 12.5, color: "var(--text-dim)", marginTop: 10 }}>
@@ -580,6 +616,11 @@ export function RegisterPatient() {
               >
                 Start again
               </button>
+              {mobileAccounts.length === 0 && (
+                <button className="btn btn-ghost" type="button" onClick={handleResendOtp} disabled={loading || resendIn > 0}>
+                  {resendIn > 0 ? `Resend OTP in ${resendIn}s` : "Resend OTP"}
+                </button>
+              )}
               <button className="btn btn-primary" type="button" onClick={handleVerifyOtp} disabled={loading}>
                 {loading ? "Verifying..." : mobileAccounts.length > 0 ? "Confirm selection" : "Verify"}
               </button>

@@ -1,9 +1,10 @@
 import { ApiError } from '@/api/client';
 import { retrieveAbdmToken, type AbdmEnvironment } from '@/api/endpoints';
 
-// /abha/retrieve stores ABDM access/refresh tokens as httpOnly cookies that the
-// other ABHA routes read. They last 2h, so refresh a little before that.
-const ABDM_SESSION_MS = 100 * 60 * 1000;
+// /abha/retrieve stores ABDM access/refresh tokens as httpOnly cookies that the other ABHA routes
+// read. ABDM gateway tokens last only 20 minutes (the backend expires the cookie slightly earlier),
+// so refresh well before that.
+const ABDM_SESSION_MS = 15 * 60 * 1000;
 let validUntil = 0;
 
 async function ensureSession(environment: AbdmEnvironment, force = false) {

@@ -1,7 +1,7 @@
 // Every backend route the frontend calls, in one place. Paths follow the backend
 // README's API table; request/response shapes follow its routes and zod validators.
 // If the backend changes, this is the file to update.
-import { get, post } from '@/api/client';
+import { get, getBlob, post } from '@/api/client';
 
 export type AbdmEnvironment = 'SANDBOX' | 'PRODUCTION';
 
@@ -146,10 +146,10 @@ export interface FullAbhaProfile {
   [key: string]: unknown;
 }
 
-export const getAbhaProfile = (environment: AbdmEnvironment = 'SANDBOX') =>
-  get<Envelope<FullAbhaProfile>>(`/abha/profile?environment=${environment}`);
+// Both are tied to the patient whose ABHA was last verified in this browser session.
+export const getAbhaProfile = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
+  get<Envelope<FullAbhaProfile>>(`/abha/profile?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);
 
-import { getBlob } from '@/api/client';
-export const getAbhaQrCodeBlob = (environment: AbdmEnvironment = 'SANDBOX') =>
-  getBlob(`/abha/profile/qr?environment=${environment}`);
+export const getAbhaQrCodeBlob = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
+  getBlob(`/abha/profile/qr?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);
 

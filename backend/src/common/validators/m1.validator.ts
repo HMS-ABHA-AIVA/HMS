@@ -54,7 +54,10 @@ export const verifyExistingAbhaMobileUserSchema = z.object({
     environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
 });
 
+// Profile / QR are tied to one patient: the X-token cookie is only valid for the patient it was issued for.
 export const getAbhaProfileSchema = z.object({
+
+  patientId: z.uuid("Invalid patient ID"),
 
   environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
 

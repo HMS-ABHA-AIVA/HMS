@@ -1,50 +1,51 @@
-import type { Request, Response, NextFunction } from "express";
+import type { Response, NextFunction } from "express";
+import type { ZodType } from "zod";
 import { ApiError } from "../../../common/errors/appError.js";
 import type { userAuthRequest } from "../../../common/middlewares/verifyUserJwt.js"
 import { abdmTokenRetrievalSchema, aadhaarOtpRequestSchema, aadharOtpVerifySchema, existingAbhaAadhaarOtpRequestSchema, existingAbhaAadhaarOtpVerifySchema, existingAbhaMobileOtpRequestSchema, existingAbhaMobileOtpVerifySchema, verifyExistingAbhaMobileUserSchema,getAbhaProfileSchema } from "../../../common/validators/m1.validator.js"
 import { abdmTokenRetrievalService, aadhaarOtpRequestService, aadhaarOtpVerifyService, requestExistingAbhaAadhaarOtpService, verifyExistingAbhaAadhaarOtpService, requestExistingAbhaMobileOtpService, verifyExistingAbhaMobileOtpService, verifyExistingAbhaMobileUserService,generateAbhaQrService, getAbhaProfileService } from "./m1.service.js";
+import { setAbdmSessionCookies, setAbhaSessionCookies, setTTokenCookie, getAbhaSessionToken } from "../../../common/utils/abdmCookies.js";
 
+// Validates request input and returns the typed result, or throws a 400 with every zod message.
+const parseOrThrow = <T>(schema: ZodType<T>, input: unknown, label = "body"): T => {
+  const result = schema.safeParse(input);
+
+  if (!result.success) {
+    const message = result.error.issues.map((issue) => issue.message).join(", ");
+    throw new ApiError(400, `Invalid request ${label}: ${message}`);
+  }
+
+  return result.data;
+};
+
+const requireUser = (req: userAuthRequest) => {
+  if (!req.user) {
+    throw new ApiError(401, "Unauthorized access");
+  }
+  return req.user;
+};
+
+// Every ABHA route except /retrieve needs the ABDM gateway token issued by /retrieve.
+const requireAbdmAccessToken = (req: userAuthRequest): string => {
+  const token = req.cookies?.abdmAccessToken;
+  if (!token) {
+    throw new ApiError(401, "ABDM authentication required");
+  }
+  return token;
+};
 
 export const abdmTokenRetrievalRequest = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
-    const result = abdmTokenRetrievalSchema.safeParse(req.body)
+    const { environment } = parseOrThrow(abdmTokenRetrievalSchema, req.body);
+    const user = requireUser(req);
 
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue: any) => issue.message)
-        .join(", ");
+    const tokens = await abdmTokenRetrievalService(user.facilityId, user.id, environment);
 
-      throw new ApiError(400, `Invalid request body: ${message}`);
-    }
-    const environment = result.data.environment
-    if (!req.user) {
-      throw new ApiError(401, "unauthorized access");
-    }
-
-    const facilityId = req.user.facilityId;
-    const userId = req.user.id;
-
-    const adbmTokenResponse = await abdmTokenRetrievalService(facilityId, userId, environment);
-
-    res.cookie("abdmAccessToken", adbmTokenResponse.abdmAccessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 2 * 60 * 60 * 1000,
-    });
-
-    res.cookie("abdmRefreshToken", adbmTokenResponse.abdmRefreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
+    setAbdmSessionCookies(res, tokens);
 
     res.status(200).json({
       status: "success",
       message: "ABDM login success",
-      // data: adbmTokenResponse
     })
   } catch (error) {
     next(error);
@@ -54,45 +55,11 @@ export const abdmTokenRetrievalRequest = async (req: userAuthRequest, res: Respo
 //creation
 export const aadhaarOtpRequestController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      throw new ApiError(401, "Unauthorized access");
-    }
+    const user = requireUser(req);
+    const { environment, patientId, aadhaar } = parseOrThrow(aadhaarOtpRequestSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const result = aadhaarOtpRequestSchema.safeParse(req.body);
-
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue) => issue.message)
-        .join(", ");
-
-      throw new ApiError(
-        400,
-        `Invalid request body: ${message}`,
-      );
-    }
-
-    const { environment, patientId, aadhaar } = result.data;
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-
-    if (!abdmAccessToken) {
-      throw new ApiError(
-        401,
-        "ABDM authentication required",
-      );
-    }
-
-    const facilityId = req.user.facilityId;
-
-
-
-    const resultData = await aadhaarOtpRequestService(
-      patientId,
-      facilityId,
-      abdmAccessToken,
-      environment,
-      aadhaar,
-    );
+    const resultData = await aadhaarOtpRequestService(patientId, user.facilityId, abdmAccessToken, environment, aadhaar);
 
     res.status(200).json({
       status: "success",
@@ -102,7 +69,6 @@ export const aadhaarOtpRequestController = async (req: userAuthRequest, res: Res
         txnId: resultData.txnId,
       },
     });
-
   } catch (error) {
     next(error);
   }
@@ -110,45 +76,26 @@ export const aadhaarOtpRequestController = async (req: userAuthRequest, res: Res
 
 export const aadhaarOtpVerifyController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
+    const user = requireUser(req);
+    const { transactionId, otp, mobile, environment } = parseOrThrow(aadharOtpVerifySchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
 
-    if (!req.user) {
-      throw new ApiError(401, "unauthorized access");
+    const resultData = await aadhaarOtpVerifyService(transactionId, user.facilityId, abdmAccessToken, environment, otp, mobile);
+
+    // Enrolment already authenticates the user, so the profile / QR can be read straight away.
+    if (resultData.xToken) {
+      setAbhaSessionCookies(res, resultData.xToken, resultData.patientId, resultData.xTokenExpiresIn);
     }
-
-    const result = aadharOtpVerifySchema.safeParse(req.body);
-
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue) => issue.message)
-        .join(", ");
-
-      throw new ApiError(
-        400,
-        `Invalid request body: ${message}`,
-      );
-    }
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-    if (!abdmAccessToken) {
-      throw new ApiError(401, "abdm authentication required");
-    }
-
-    const facilityId = req.user.facilityId
-    const { transactionId, otp, mobile, environment } = result.data;
-
-    const resultData = await aadhaarOtpVerifyService(
-      transactionId,
-      facilityId,
-      abdmAccessToken,
-      environment,
-      otp,
-      mobile,
-    );
 
     return res.status(200).json({
       status: "success",
       message: "ABHA account created successfully",
-      data: resultData,
+      data: {
+        patientId: resultData.patientId,
+        abhaNumber: resultData.abhaNumber,
+        abhaAddress: resultData.abhaAddress,
+        isNew: resultData.isNew,
+      },
     });
   } catch (error) {
     next(error);
@@ -158,50 +105,11 @@ export const aadhaarOtpVerifyController = async (req: userAuthRequest, res: Resp
 //VERIFICATION
 export const requestExistingAbhaAadhaarOtpController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      throw new ApiError(401, "Unauthorized access");
-    }
+    const user = requireUser(req);
+    const { patientId, aadhaar, environment } = parseOrThrow(existingAbhaAadhaarOtpRequestSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const result = existingAbhaAadhaarOtpRequestSchema.safeParse(
-      req.body
-    );
-
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue) => issue.message)
-        .join(", ");
-
-      throw new ApiError(
-        400,
-        `Invalid request body: ${message}`
-      );
-    }
-
-    const {
-      patientId,
-      aadhaar,
-      environment,
-    } = result.data;
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-
-    if (!abdmAccessToken) {
-      throw new ApiError(
-        401,
-        "ABDM authentication required"
-      );
-    }
-
-    const facilityId = req.user.facilityId;
-
-    const resultData =
-      await requestExistingAbhaAadhaarOtpService(
-        patientId,
-        facilityId,
-        abdmAccessToken,
-        environment,
-        aadhaar
-      );
+    const resultData = await requestExistingAbhaAadhaarOtpService(patientId, user.facilityId, abdmAccessToken, environment, aadhaar);
 
     return res.status(200).json({
       status: "success",
@@ -218,50 +126,13 @@ export const requestExistingAbhaAadhaarOtpController = async (req: userAuthReque
 //WE RECIEVE LOGIN TOKEN + WE RETURN PROFILE
 export const verifyExistingAbhaAadhaarOtpController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      throw new ApiError(
-        401,
-        "Unauthorized access"
-      );
-    }
+    const user = requireUser(req);
+    const { transactionId, otp, environment } = parseOrThrow(existingAbhaAadhaarOtpVerifySchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const result = existingAbhaAadhaarOtpVerifySchema.safeParse(req.body);
+    const resultData = await verifyExistingAbhaAadhaarOtpService(transactionId, user.facilityId, abdmAccessToken, environment, otp);
 
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue: any) => issue.message)
-        .join(", ");
-
-      throw new ApiError(
-        400,
-        `Invalid request body: ${message}`
-      );
-    }
-
-    const { transactionId, otp, environment } = result.data;
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-
-    if (!abdmAccessToken) {
-      throw new ApiError(401, "ABDM authentication required");
-    }
-
-    const facilityId = req.user.facilityId;
-
-    const resultData = await verifyExistingAbhaAadhaarOtpService(
-      transactionId,
-      facilityId,
-      abdmAccessToken,
-      environment,
-      otp
-    );
-
-    res.cookie("abhaXToken", resultData.token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    });
-
+    setAbhaSessionCookies(res, resultData.token, resultData.patientId, resultData.expiresIn);
 
     return res.status(200).json({
       status: "success",
@@ -282,43 +153,11 @@ export const verifyExistingAbhaAadhaarOtpController = async (req: userAuthReques
 //step 1 - request otp
 export const requestExistingAbhaMobileOtpController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      throw new ApiError(
-        401,
-        "Unauthorized access"
-      );
-    }
+    const user = requireUser(req);
+    const { patientId, mobile, environment } = parseOrThrow(existingAbhaMobileOtpRequestSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const result = existingAbhaMobileOtpRequestSchema.safeParse(req.body);
-
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue) => issue.message)
-        .join(", ");
-
-      throw new ApiError(
-        400,
-        `Invalid request body: ${message}`
-      );
-    }
-
-    const { patientId, mobile, environment } = result.data;
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-
-    if (!abdmAccessToken) {
-      throw new ApiError(401, "ABDM authentication required");
-    }
-
-    const facilityId = req.user.facilityId;
-
-    const resultData = await requestExistingAbhaMobileOtpService(
-      patientId,
-      facilityId,
-      abdmAccessToken,
-      environment,
-      mobile
-    );
+    const resultData = await requestExistingAbhaMobileOtpService(patientId, user.facilityId, abdmAccessToken, environment, mobile);
 
     return res.status(200).json({
       status: "success",
@@ -335,44 +174,13 @@ export const requestExistingAbhaMobileOtpController = async (req: userAuthReques
 //step 2 - verify otp and get T token
 export const verifyExistingAbhaMobileOtpController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      throw new ApiError(401, "Unauthorized access");
-    }
+    const user = requireUser(req);
+    const { transactionId, otp, environment } = parseOrThrow(existingAbhaMobileOtpVerifySchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const result = existingAbhaMobileOtpVerifySchema.safeParse(req.body);
+    const resultData = await verifyExistingAbhaMobileOtpService(transactionId, user.facilityId, abdmAccessToken, environment, otp);
 
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue: any) => issue.message)
-        .join(", ");
-
-      throw new ApiError(400, `Invalid request body: ${message}`);
-    }
-
-    const { transactionId, otp, environment } = result.data;
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-
-    if (!abdmAccessToken) {
-      throw new ApiError(401, "ABDM authentication required");
-    }
-
-    const facilityId = req.user.facilityId;
-
-    const resultData = await verifyExistingAbhaMobileOtpService(
-      transactionId,
-      facilityId,
-      abdmAccessToken,
-      environment,
-      otp
-    );
-
-    res.cookie("t_token", resultData.token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: resultData.expiresIn * 1000,
-    });
+    setTTokenCookie(res, resultData.token, resultData.expiresIn);
 
     return res.status(200).json({
       status: "success",
@@ -391,57 +199,19 @@ export const verifyExistingAbhaMobileOtpController = async (req: userAuthRequest
 //step 3 - verify user and link internally
 export const verifyExistingAbhaMobileUserController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      throw new ApiError(401, "Unauthorized access");
+    const user = requireUser(req);
+    const { abhaNumber, transactionId, environment } = parseOrThrow(verifyExistingAbhaMobileUserSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+
+    const tToken = req.cookies?.t_token;
+    if (!tToken) {
+      throw new ApiError(401, "ABHA verification session expired");
     }
 
-    const result = verifyExistingAbhaMobileUserSchema.safeParse(req.body);
+    const resultData = await verifyExistingAbhaMobileUserService(abhaNumber, transactionId, user.facilityId, abdmAccessToken, environment, tToken);
 
-    if (!result.success) {
-      const message = result.error.issues
-        .map((issue: any) => issue.message)
-        .join(", ");
-
-      throw new ApiError(400, `Invalid request body: ${message}`);
-    }
-
-    const { abhaNumber, transactionId, environment } = result.data;
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-
-    if (!abdmAccessToken) {
-      throw new ApiError(
-        401,
-        "ABDM authentication required"
-      );
-    }
-
-    const t_token = req.cookies.t_token;
-
-    if (!t_token) {
-      throw new ApiError(
-        401,
-        "ABHA verification session expired"
-      );
-    }
-
-    const facilityId = req.user.facilityId;
-
-    const resultData = await verifyExistingAbhaMobileUserService(
-      abhaNumber,
-      transactionId,
-      facilityId,
-      abdmAccessToken,
-      environment,
-      t_token
-    );
     //set x-token for abha profile auth
-    res.cookie("abhaXToken", resultData.token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: resultData.expiresIn * 1000,
-    });
+    setAbhaSessionCookies(res, resultData.token, resultData.patientId, resultData.expiresIn);
     // T-token is only needed for Step 3
     res.clearCookie("t_token");
 
@@ -466,127 +236,43 @@ export const verifyExistingAbhaMobileUserController = async (req: userAuthReques
 
 //generate QR code for abha number
 export const generateAbhaQrController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
-
   try {
-    if (!req.user) {
-      throw new ApiError(401, "Unauthorized access");
-    }
+    const user = requireUser(req);
+    const { patientId, environment } = parseOrThrow(getAbhaProfileSchema, req.query, "query parameters");
+    const abdmAccessToken = requireAbdmAccessToken(req);
+    const abhaXToken = getAbhaSessionToken(req, patientId);
 
-    const abdmAccessToken = req.cookies.abdmAccessToken;
+    const resultData = await generateAbhaQrService(patientId, user.facilityId, abdmAccessToken, abhaXToken, environment);
 
-    if (!abdmAccessToken) {
-      throw new ApiError(
-        401,
-        "ABDM authentication required"
-      );
-    }
-    const abhaXToken = req.cookies.abhaXToken;
-
-    if (!abhaXToken) {
-      throw new ApiError(
-        401,
-        "ABHA verification session expired"
-      );
-    }
-
-    const { facilityId } = req.user;
-
-    const qrQuery = getAbhaProfileSchema.safeParse(req.query);
-
-    if (!qrQuery.success) {
-      throw new ApiError(400, `Invalid query parameters: ${qrQuery.error.issues.map((issue: any) => issue.message).join(", ")}`);
-    }
-
-    const resultData = await generateAbhaQrService(
-      facilityId,
-      abdmAccessToken,
-      abhaXToken,
-      qrQuery.data.environment
-    );
-
-    res.setHeader(
-      "Content-Type",
-      resultData.contentType
-    );
+    res.setHeader("Content-Type", resultData.contentType);
+    // Patient-specific, never cache in shared caches.
+    res.setHeader("Cache-Control", "private, no-store");
 
     return res.status(200).send(resultData.data);
-
   } catch (error) {
-
     next(error);
-
   }
-
 };
 
 
 //GET abha profile
-
 export const getAbhaProfileController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
-
   try {
+    const user = requireUser(req);
+    const { patientId, environment } = parseOrThrow(getAbhaProfileSchema, req.query, "query parameters");
+    const abdmAccessToken = requireAbdmAccessToken(req);
+    const abhaXToken = getAbhaSessionToken(req, patientId);
 
-    if (!req.user) {
+    const resultData = await getAbhaProfileService(patientId, user.facilityId, abdmAccessToken, abhaXToken, environment);
 
-      throw new ApiError(401, "Unauthorized access");
-
-    }
-
-    const result = getAbhaProfileSchema.safeParse(req.query);
-
-    if (!result.success) {
-
-      const message = result.error.issues
-        .map((issue: any) => issue.message)
-        .join(", ");
-
-      throw new ApiError(400, `Invalid query parameters: ${message}`);
-
-    }
-
-    const { environment } = result.data;
-
-    const abdmAccessToken = req.cookies.abdmAccessToken;
-
-    if (!abdmAccessToken) {
-
-      throw new ApiError(
-        401,
-        "ABDM authentication required"
-      );
-
-    }
-
-    const abhaXToken = req.cookies.abhaXToken;
-
-    if (!abhaXToken) {
-
-      throw new ApiError(
-        401,
-        "ABHA verification session expired"
-      );
-
-    }
-
-    const facilityId = req.user.facilityId;
-
-    const resultData = await getAbhaProfileService(
-       facilityId,
-      abdmAccessToken,
-      abhaXToken,
-      environment 
-    );
+    res.setHeader("Cache-Control", "private, no-store");
 
     return res.status(200).json({
       status: "success",
       message: "ABHA profile retrieved successfully",
       data: resultData,
     });
-
   } catch (error) {
-
     next(error);
-
   }
-
 };

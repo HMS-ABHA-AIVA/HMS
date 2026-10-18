@@ -3,6 +3,7 @@ import type { userAuthRequest } from "../../../common/middlewares/verifyUserJwt.
 import { loginAdminSchema } from "../../../common/validators/admin.validator.js"
 import { ApiError } from "../../../common/errors/appError.js";
 import { loginAdminService ,logoutAdminService } from "./admin.service.js";
+import { clearAbdmCookies } from "../../../common/utils/abdmCookies.js";
 
 
 export const adminLogin = async (req: Request, res: Response, next: NextFunction) => {
@@ -17,6 +18,9 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
         if (!loggedInAdmin) {
             throw new ApiError(401, "Invalid email or password");
         }
+
+        // A new login must never inherit the previous user's ABDM session (it may belong to another facility).
+        clearAbdmCookies(res);
 
         res.cookie("accessToken", loggedInAdmin.accessToken, {
             httpOnly: true,
@@ -54,6 +58,8 @@ export const adminLogout = async (req: userAuthRequest,res: Response,next: NextF
             throw new ApiError(401,"unauthorized");
         }
         await logoutAdminService(req.user.id);
+
+        clearAbdmCookies(res);
 
         res.clearCookie("accessToken", {
             httpOnly: true,

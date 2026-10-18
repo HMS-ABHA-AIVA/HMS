@@ -11,7 +11,7 @@ import {
   type AbhaTransaction,
   type FullAbhaProfile,
 } from "@/api/endpoints";
-import { SAMPLE_PATIENTS, SAMPLE_TRANSACTIONS } from "@/data/samplePatients";
+import { withAbdmSession } from "@/api/abdmSession";
 
 function formatDateTime(dateStr?: string) {
   if (!dateStr) return "—";
@@ -58,6 +58,7 @@ export function PatientRecord() {
   const [transactions, setTransactions] = useState<AbhaTransaction[]>([]);
   const [liveProfile, setLiveProfile] = useState<FullAbhaProfile | null>(null);
   const [qrUrl, setQrUrl] = useState<string>("");
+  const [liveNote, setLiveNote] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   // In-browser only (as documented until backend can store these)
@@ -84,16 +85,8 @@ export function PatientRecord() {
           ]);
           currentPatient = (patientsRes.data || []).find((p) => p.id === patientId) || null;
           txns = Array.isArray(txnsRes.data) ? txnsRes.data : [];
-        } catch {
-          // If unauthenticated or backend empty, check demo sample data
-        }
-
-        if (!currentPatient) {
-          const sample = SAMPLE_PATIENTS.find((p) => p.id === patientId);
-          if (sample) {
-            currentPatient = sample;
-            txns = SAMPLE_TRANSACTIONS;
-          }
+        } catch (err) {
+          console.error("Error loading patient:", err);
         }
 
         if (!active) return;
@@ -103,22 +96,23 @@ export function PatientRecord() {
         // 2. If ABHA is linked, try fetching live profile & live QR code
         if (currentPatient?.abha) {
           try {
-            const profileRes = await getAbhaProfile(environment);
+            const profileRes = await withAbdmSession(environment, () => getAbhaProfile(patientId, environment));
             if (active && profileRes.data) {
               setLiveProfile(profileRes.data);
             }
           } catch {
-            // Profile session token may not be active; fallback gracefully to patient's stored ABHA
+            // Live details need this ABHA to have been verified in the current session; the stored ABHA is still shown.
+            if (active) setLiveNote("Live ABHA details and QR appear once this ABHA has been verified in the current session.");
           }
 
           try {
-            const blob = await getAbhaQrCodeBlob(environment);
+            const blob = await withAbdmSession(environment, () => getAbhaQrCodeBlob(patientId, environment));
             if (active && blob) {
               createdUrl = URL.createObjectURL(blob);
               setQrUrl(createdUrl);
             }
           } catch {
-            // QR endpoint requires active X-token
+            // QR endpoint needs an active X-token for this patient
           }
         }
       } catch (err) {
@@ -156,11 +150,11 @@ export function PatientRecord() {
     else if (key === "opd") navigate("/opd");
   }
 
-  const mrn = patient?.id ? patient.id.slice(0, 6).toUpperCase() : "4F2A91";
-  const pName = patient?.name || "Patient Record";
+  const mrn = patient?.id ? patient.id.slice(0, 6).toUpperCase() : "—";
+  const pName = patient?.name || "Patient not found";
   const isLinked = Boolean(patient?.abha);
-  const abhaNumber = patient?.abha?.abhaNumber || liveProfile?.ABHANumber || "91-2345-6789-0123";
-  const abhaAddress = patient?.abha?.abhaAddress || liveProfile?.preferredAbhaAddress || "abha@abdm";
+  const abhaNumber = patient?.abha?.abhaNumber || liveProfile?.ABHANumber || "—";
+  const abhaAddress = patient?.abha?.abhaAddress || liveProfile?.preferredAbhaAddress || "—";
 
   return (
     <AppShell
@@ -186,7 +180,7 @@ export function PatientRecord() {
             <div>
               <h1 className="osh-h1">{pName}</h1>
               <p className="osh-sub" style={{ margin: 0 }}>
-                {liveProfile?.dob ? `DOB: ${liveProfile.dob}` : "34 years, female"}
+                {liveProfile?.dob ? `DOB: ${liveProfile.dob}` : patient ? "Age and gender not recorded" : "No patient with this id at your facility."}
               </p>
             </div>
             <div className="rec-meta">
@@ -247,15 +241,16 @@ export function PatientRecord() {
                     <div className="k">Name on ABHA</div>
                     <div>{liveProfile?.name || patient?.name}</div>
                     <div className="k">Date of birth</div>
-                    <div>{liveProfile?.dob || "14 March 1992"}</div>
+                    <div>{liveProfile?.dob || "—"}</div>
                     <div className="k">Address</div>
-                    <div>{liveProfile?.address || "Registered Address via ABDM"}</div>
+                    <div>{liveProfile?.address || "—"}</div>
                     <div className="k">KYC</div>
-                    <div>{liveProfile?.kycVerified ? "Verified with Aadhaar" : "Verified"}</div>
+                    <div>{liveProfile?.kycVerified === true ? "Verified with Aadhaar" : liveProfile?.kycVerified === false ? "Not verified" : "—"}</div>
                   </div>
 
                   <p className="abha-note">
-                    These details and the QR are read from ABDM each time this page opens. They are not stored on this computer.
+                    {liveNote ||
+                      "These details and the QR are read from ABDM each time this page opens. They are not stored on this computer."}
                   </p>
 
                   <div style={{ display: "flex", gap: 10 }}>

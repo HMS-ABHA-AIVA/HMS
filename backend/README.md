@@ -42,14 +42,20 @@ applicable) `data`. Errors contain a message.
 ### ABHA / ABDM M1
 
 All routes below require staff/admin authentication. `environment` must be `SANDBOX` or `PRODUCTION`.
+ABDM gateway tokens last 20 minutes; when a route answers `401 ABDM authentication required`, call `/api/abha/retrieve` again and retry.
 
-| Method | Endpoint | Request body | Purpose |
+| Method | Endpoint | Request | Purpose |
 |---|---|---|---|
-| `POST` | `/api/abha/retrieve` | `{ "environment" }` | Retrieve ABDM session tokens; sets ABDM session cookies used by the other M1 routes. |
-| `POST` | `/api/abha/create/request` | `{ "patientId", "aadhaar", "environment" }` | Request an Aadhaar OTP to create a new ABHA. Aadhaar must be 12 digits. |
-| `POST` | `/api/abha/create/verify` | `{ "transactionId", "otp", "mobile", "environment" }` | Verify the OTP and complete new ABHA creation. OTP must be 6 digits; mobile must be 10 digits. |
-| `POST` | `/api/abha/verify/request` | `{ "patientId", "aadhaar", "environment" }` | Request an Aadhaar OTP to link an existing ABHA. |
-| `POST` | `/api/abha/verify/confirm` | `{ "transactionId", "otp", "environment" }` | Verify the OTP and link the existing ABHA. |
+| `POST` | `/api/abha/retrieve` | body `{ environment }` | Get ABDM session tokens (httpOnly cookies used by the other routes). |
+| `POST` | `/api/abha/create/aadhar/request` | body `{ patientId, aadhaar, environment }` | Send an Aadhaar OTP to create a new ABHA. |
+| `POST` | `/api/abha/create/aadhar/verify` | body `{ transactionId, otp, mobile, environment }` | Verify the OTP, create the ABHA and link it to the patient. |
+| `POST` | `/api/abha/verify/aadhar/request` | body `{ patientId, aadhaar, environment }` | Send an Aadhaar OTP to link an existing ABHA. |
+| `POST` | `/api/abha/verify/aadhar/confirm` | body `{ transactionId, otp, environment }` | Verify the OTP and link the existing ABHA. |
+| `POST` | `/api/abha/verify/mobile/request` | body `{ patientId, mobile, environment }` | Send a mobile OTP to find existing ABHA accounts. |
+| `POST` | `/api/abha/verify/mobile/confirm` | body `{ transactionId, otp, environment }` | Verify the OTP; returns the account list. |
+| `POST` | `/api/abha/verify/mobile/user` | body `{ abhaNumber, transactionId, environment }` | Choose an account and link it to the patient. |
+| `GET` | `/api/abha/profile` | query `patientId, environment` | Live ABHA profile. Only works for the patient whose ABHA was verified in this session. |
+| `GET` | `/api/abha/profile/qr` | query `patientId, environment` | Live ABHA QR image, same restriction as the profile. |
 
-`patientId` and `transactionId` must be UUIDs. The Aadhaar OTP routes call ABDM, so
-valid ABDM facility credentials and the matching environment must be configured first.
+`patientId` and `transactionId` must be UUIDs. ABDM/UIDAI validation messages (wrong Aadhaar, wrong OTP, 30-second
+OTP cool-down) are returned as-is with status 400/422/429.
