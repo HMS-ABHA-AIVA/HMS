@@ -70,38 +70,79 @@ abdmHttp.interceptors.response.use((response) => {
       requestId: typeof requestId === "string" ? requestId : undefined,
       status,
       code: data?.error?.code,
+      message,
       url: error.config?.url,
       timedOut: error.code === "ECONNABORTED",
     });
 
     // Network failure, timeout or gateway/server fault: genuinely "try again later".
     if (!error.response || (status !== undefined && status >= 500) || error.code === "ECONNABORTED") {
-      return Promise.reject(new ApiError(503, "ABHA service is temporarily unavailable. Please try again."));
+      return Promise.reject(new ApiError(503, "ABHA service is temporarily unavailable. Please try again.", [], "ABDM_UNAVAILABLE"));
     }
 
     // 401 from ABDM = our gateway access token is missing/expired. The frontend refreshes the ABDM
     // session and retries when it sees this exact message. X-token callers translate it themselves.
     if (status === 401) {
-      return Promise.reject(new ApiError(401, "ABDM authentication required"));
+      return Promise.reject(new ApiError(401, "ABDM authentication required", [], "ABDM_AUTH_REQUIRED"));
     }
 
     if (status === 403) {
-      return Promise.reject(new ApiError(502, "ABDM rejected authentication. Check the configured credentials and environment."));
+      return Promise.reject(new ApiError(502, "ABDM rejected authentication. Check the configured credentials and environment.", [], "ABDM_AUTH_REJECTED"));
     }
 
-    if (status === 429) {
-      return Promise.reject(new ApiError(429, message || "Too many attempts. Please wait 30 seconds before requesting a new OTP."));
-    }
-
-    // 400/422 carry ABDM/UIDAI's own explanation (wrong Aadhaar, wrong OTP, invalid mobile ...).
-    // Pass it through instead of masking it as an outage.
-    if (status === 400 || status === 422) {
-      return Promise.reject(new ApiError(status, message || "ABDM rejected the request. Check the details entered and try again."));
-    }
-
-    return Promise.reject(new ApiError(502, message || "ABDM could not complete the request. Please try again."));
+    // Every other 4xx carries ABDM/UIDAI's own explanation (wrong Aadhaar, wrong OTP, no ABHA for this
+    // number, cool-down ...). Classify it into a specific, staff-readable error instead of masking it.
+    return Promise.reject(classifyAbdmClientError(status ?? 400, data?.error?.code, message));
   },
 );
+
+// Turns an ABDM 4xx into an ApiError with a specific message and a stable `code`.
+// ABDM's wording is inconsistent, so known cases are matched on code first, then on text.
+// Anything unrecognised keeps ABDM's own message rather than a generic one.
+function classifyAbdmClientError(status: number, abdmCode: string | undefined, message: string | undefined): ApiError {
+  const text = message ?? "";
+  const fail = (httpStatus: number, code: string, friendly: string) => new ApiError(httpStatus, friendly, [], code);
+
+  if (status === 429) {
+    return fail(429, "OTP_COOLDOWN", "An OTP was requested a moment ago. Wait about 30 seconds before requesting another.");
+  }
+  // ABDM answers 400 "Invalid X-token" (not 401) for a missing/expired/wrong ABHA session token.
+  if (/\b[xt]-?token\b/i.test(text)) {
+    return new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");
+  }
+  if (abdmCode === "ABDM-1115" || /does not match with any|no (abha|account)s? (found|exist)|not (registered|found).*abha|abha.*not found/i.test(text)) {
+    return fail(404, "ABHA_NOT_FOUND", "No ABHA is registered with these details. Check the number with the patient, or create a new ABHA for them.");
+  }
+  if (/aadhaar number is incorrect|invalid aadhaar|aadhaar.*(not valid|incorrect)/i.test(text)) {
+    return fail(422, "AADHAAR_INVALID", "The Aadhaar number is not valid. Check it with the patient and try again.");
+  }
+  if (/mobile.*(not (linked|registered|available|updated)|does not exist)|no mobile|mobile number.*aadhaar/i.test(text) && /aadhaar|uidai/i.test(text)) {
+    return fail(422, "AADHAAR_MOBILE_NOT_LINKED", "No mobile number is linked to this Aadhaar, so UIDAI cannot send an OTP. The patient must link a mobile to their Aadhaar first.");
+  }
+  if (/invalid mobile|mobile number.*(invalid|incorrect)/i.test(text)) {
+    return fail(400, "MOBILE_INVALID", "The mobile number is not valid. Check it and try again.");
+  }
+  if (/otp.*expired|expired.*otp|txn.*expired|transaction.*(expired|not found|invalid)|invalid.*transaction/i.test(text)) {
+    return fail(400, "OTP_EXPIRED", "This OTP is no longer valid. Request a new OTP and try again.");
+  }
+  if (/otp/i.test(text) && /(invalid|incorrect|wrong|mismatch|not match|does not match|failed)/i.test(text)) {
+    return fail(422, "OTP_INVALID", "The OTP entered is incorrect. Check the 6 digits with the patient and try again.");
+  }
+  if (abdmCode === "ABDM-1027" || /(too many|maximum|exceeded|blocked|locked|try after|attempts)/i.test(text)) {
+    return fail(429, "TOO_MANY_ATTEMPTS", text ? `Too many attempts: ${text}` : "Too many attempts. This request is blocked for now; try again later.");
+  }
+  if (/suspend|deactivat|cancel|disabled|not active/i.test(text)) {
+    return fail(422, "ACCOUNT_INACTIVE", `This Aadhaar/ABHA cannot be used right now: ${text}`);
+  }
+  if (status === 404) {
+    return fail(404, "ABDM_NOT_FOUND", text || "ABDM could not find the requested record.");
+  }
+  if (status === 409) {
+    return fail(409, "ABDM_CONFLICT", text || "ABDM reports a conflict with an existing record.");
+  }
+
+  return fail(status === 400 ? 400 : 422, "ABDM_REJECTED", text || "ABDM rejected the request. Check the details entered and try again.");
+}
 
 // ABDM gateway CM-ID: "sbx" for Sandbox, "abdm" for Production.
 export const getCmId = (environment: AbdmEnvironment) =>
@@ -389,14 +430,45 @@ export const generateAbhaQr = async ({accessToken, xToken, environment}: {access
         "TIMESTAMP": new Date().toISOString(),
         "X-token": `Bearer ${xToken}`,
         "Authorization": `Bearer ${accessToken}`,
+        // axios would otherwise send "application/json, text/plain"; ABDM's binary endpoints answer 406 to that.
+        Accept: "*/*",
       },
     }
   );
 
-  return {
-    data: response.data,
-    contentType: String(
-      response.headers["content-type"] ?? "image/png"
-    ),
-  };
+  return normalizeQrResponse(Buffer.from(response.data), String(response.headers["content-type"] ?? ""));
 };
+
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+
+// ABDM has returned QR codes as raw image bytes, and gateways sometimes wrap them as base64 text or JSON.
+// Always hand the browser real image bytes with a matching content type.
+function normalizeQrResponse(body: Buffer, contentType: string): { data: Buffer; contentType: string } {
+  const imageType = (buf: Buffer) =>
+    buf.subarray(0, 4).equals(PNG_MAGIC) ? "image/png" : buf.subarray(0, 3).equals(JPEG_MAGIC) ? "image/jpeg" : undefined;
+
+  const direct = imageType(body);
+  if (direct) return { data: body, contentType: direct };
+
+  let text = body.toString("utf8").trim();
+  if (text.startsWith("{")) {
+    try {
+      const json = JSON.parse(text) as Record<string, unknown>;
+      const candidate = Object.values(json).find((value) => typeof value === "string" && value.length > 100);
+      if (typeof candidate === "string") text = candidate;
+    } catch {
+      // not JSON; fall through to the base64 attempt
+    }
+  }
+
+  const base64 = text.replace(/^data:image\/\w+;base64,/, "").replace(/\s/g, "");
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(base64) && base64.length > 100) {
+    const decoded = Buffer.from(base64, "base64");
+    const decodedType = imageType(decoded);
+    if (decodedType) return { data: decoded, contentType: decodedType };
+  }
+
+  console.error("ABDM QR response was not an image", { contentType, bytes: body.length });
+  throw new ApiError(502, "ABDM returned the QR code in an unexpected format.", [], "QR_FORMAT");
+}

@@ -28,6 +28,8 @@ export function RegisterPatient() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const existingPatientId = searchParams.get("patientId");
+  // Re-verifying an already linked patient: only link modes, and nothing new is created.
+  const refresh = searchParams.get("refresh") === "1";
 
   const { session, environment, signOut } = useAuthStore();
   const facilityName = session?.kind === "facility" ? session.name : "City General Hospital";
@@ -36,11 +38,11 @@ export function RegisterPatient() {
   const envDisplay = environment === "PRODUCTION" ? "Production" : "Sandbox";
 
   const [step, setStep] = useState<Step>(existingPatientId ? 2 : 1);
-  const [mode, setMode] = useState<AbhaMode>("create_aadhaar");
+  const [mode, setMode] = useState<AbhaMode>(refresh ? "link_aadhaar" : "create_aadhaar");
 
   // Step 1: Patient details
   const [patientId, setPatientId] = useState<string>(existingPatientId || "");
-  const [form, setForm] = useState({ name: "", age: "", gender: "Male", mobile: "", email: "" });
+  const [form, setForm] = useState({ name: "", dob: "", gender: "Male", mobile: "", email: "" });
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   // Step 3: Identity & Consent
@@ -91,6 +93,18 @@ export function RegisterPatient() {
       setErrorState({ tone: "error", title: "Name is required", body: "Please enter the patient's full name." });
       return;
     }
+    if (!form.dob) {
+      setErrorState({
+        tone: "error",
+        title: "Date of birth is required",
+        body: "It is checked against the ABHA before the ABHA can be linked.",
+      });
+      return;
+    }
+    if (form.dob > new Date().toISOString().slice(0, 10)) {
+      setErrorState({ tone: "error", title: "Invalid date of birth", body: "Date of birth cannot be in the future." });
+      return;
+    }
     const cleanMobile = form.mobile.replace(/\D/g, "");
     if (cleanMobile.length !== 10) {
       setErrorState({ tone: "error", title: "Invalid mobile number", body: "Mobile number must be exactly 10 digits." });
@@ -103,6 +117,7 @@ export function RegisterPatient() {
         name: form.name.trim(),
         phone: cleanMobile,
         email: form.email.trim() || undefined,
+        dateOfBirth: form.dob,
       });
       const createdId = res.data.id;
       setPatientId(createdId);
@@ -347,19 +362,21 @@ export function RegisterPatient() {
               <label>Full name</label>
               <input
                 className="input"
-                placeholder="For example, Ramesh Gupta"
+                placeholder="As on the patient's Aadhaar / ABHA"
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
                 disabled={loading}
               />
             </div>
             <div className="row">
-              <div className="field" style={{ width: 110 }}>
-                <label>Age</label>
+              <div className="field" style={{ width: 170 }}>
+                <label>Date of birth</label>
                 <input
                   className="input"
-                  value={form.age}
-                  onChange={(e) => set("age", e.target.value)}
+                  type="date"
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={form.dob}
+                  onChange={(e) => set("dob", e.target.value)}
                   disabled={loading}
                 />
               </div>
@@ -419,13 +436,18 @@ export function RegisterPatient() {
 
         {step === 2 && (
           <div className="card-form">
-            <h2>Add an ABHA</h2>
-            <p className="lead">Choose how to add this patient's ABHA. You can also skip and do it later.</p>
+            <h2>{refresh ? "Verify this patient's ABHA" : "Add an ABHA"}</h2>
+            <p className="lead">
+              {refresh
+                ? "Verify the ABHA already on this record so its live details and QR code can be shown."
+                : "Choose how to add this patient's ABHA. You can also skip and do it later."}
+            </p>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
                 <StopState {...errorState} />
               </div>
             )}
+            {!refresh && (
             <button
               className="btn btn-ghost"
               style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 10 }}
@@ -440,6 +462,7 @@ export function RegisterPatient() {
                 A new ABHA using the patient's Aadhaar and OTP.
               </div>
             </button>
+            )}
             <button
               className="btn btn-ghost"
               style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 10 }}
@@ -468,9 +491,15 @@ export function RegisterPatient() {
                 Link using the mobile number registered with ABHA.
               </div>
             </button>
-            <button className="btn-link" type="button" onClick={() => setStep(5)}>
-              Skip for now
-            </button>
+            {refresh ? (
+              <button className="btn-link" type="button" onClick={() => navigate(`/record/${patientId}`)}>
+                Back to patient record
+              </button>
+            ) : (
+              <button className="btn-link" type="button" onClick={() => setStep(5)}>
+                Skip for now
+              </button>
+            )}
           </div>
         )}
 
@@ -633,7 +662,7 @@ export function RegisterPatient() {
             <h2>Done</h2>
             <p className="lead">
               <span className="dot ok" />
-              ABHA linked to this patient.
+              {refresh ? "ABHA verified. Live details and the QR code are now available on the record." : "ABHA linked to this patient."}
             </p>
             <div className="form-actions" style={{ justifyContent: "flex-start", gap: 12 }}>
               <button className="btn btn-primary" onClick={() => navigate(`/record/${patientId}`)}>

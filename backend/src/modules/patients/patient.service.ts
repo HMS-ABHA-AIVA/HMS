@@ -1,7 +1,10 @@
 import { prisma } from "../../config/db.js";
 import { ApiError } from "../../common/errors/appError.js";
 
-export const createPatientService = async (name: string,phone: string,email: string | undefined,facilityId: string) => {
+// DATE column <-> "YYYY-MM-DD" (no time zone shifts)
+const toDateOnly = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
+
+export const createPatientService = async (name: string,phone: string,email: string | undefined,facilityId: string,dateOfBirth?: string) => {
      const existingPatient = await prisma.patient.findFirst({
         where: {
             phone,
@@ -20,11 +23,12 @@ export const createPatientService = async (name: string,phone: string,email: str
             name,
             phone,
             email : email ?? null,
+            dateOfBirth: dateOfBirth ? new Date(`${dateOfBirth}T00:00:00.000Z`) : null,
             facilityId
         }
     });
 
-    return patient;
+    return { ...patient, dateOfBirth: toDateOnly(patient.dateOfBirth) };
 };
 export const getAllPatientsService = async (facilityId: string) => {
     const patients = await prisma.patient.findMany({
@@ -44,6 +48,7 @@ export const getAllPatientsService = async (facilityId: string) => {
     name: patient.name,
     phone: patient.phone,
     email: patient.email,
+    dateOfBirth: toDateOnly(patient.dateOfBirth),
     createdAt: patient.createdAt,
     updatedAt: patient.updatedAt,
     abha: patient.abha

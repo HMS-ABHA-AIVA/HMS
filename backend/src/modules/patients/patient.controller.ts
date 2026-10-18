@@ -32,7 +32,8 @@ export const createPatientController = async (req: userAuthRequest,res: Response
         result.data.name,
         result.data.phone,
         result.data.email,
-        facilityId
+        facilityId,
+        result.data.dateOfBirth
     );
 
     return res.status(201).json({

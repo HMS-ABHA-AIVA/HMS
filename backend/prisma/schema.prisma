@@ -99,6 +99,9 @@ model Patient {
     phone String
     email String?
 
+    // Compared with the ABHA profile before an ABHA can be linked (see abhaMatch.ts)
+    dateOfBirth DateTime? @db.Date
+
     facilityId String
 
     facility Facility @relation(fields: [facilityId], references: [id])

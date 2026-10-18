@@ -12,7 +12,7 @@ const parseOrThrow = <T>(schema: ZodType<T>, input: unknown, label = "body"): T 
 
   if (!result.success) {
     const message = result.error.issues.map((issue) => issue.message).join(", ");
-    throw new ApiError(400, `Invalid request ${label}: ${message}`);
+    throw new ApiError(400, `Invalid request ${label}: ${message}`, [], "VALIDATION");
   }
 
   return result.data;
@@ -29,7 +29,7 @@ const requireUser = (req: userAuthRequest) => {
 const requireAbdmAccessToken = (req: userAuthRequest): string => {
   const token = req.cookies?.abdmAccessToken;
   if (!token) {
-    throw new ApiError(401, "ABDM authentication required");
+    throw new ApiError(401, "ABDM authentication required", [], "ABDM_AUTH_REQUIRED");
   }
   return token;
 };
@@ -205,7 +205,7 @@ export const verifyExistingAbhaMobileUserController = async (req: userAuthReques
 
     const tToken = req.cookies?.t_token;
     if (!tToken) {
-      throw new ApiError(401, "ABHA verification session expired");
+      throw new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");
     }
 
     const resultData = await verifyExistingAbhaMobileUserService(abhaNumber, transactionId, user.facilityId, abdmAccessToken, environment, tToken);

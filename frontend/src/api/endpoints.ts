@@ -53,11 +53,13 @@ export interface BackendPatient {
   name: string;
   phone: string;
   email: string | null;
+  /** YYYY-MM-DD; checked against the ABHA before linking. Older patients may not have one. */
+  dateOfBirth?: string | null;
   facilityId: string;
   createdAt: string;
 }
 
-export const createPatient = (body: { name: string; phone: string; email?: string }) =>
+export const createPatient = (body: { name: string; phone: string; email?: string; dateOfBirth?: string }) =>
   post<Envelope<BackendPatient>>('/patient/create', body);
 
 /** A patient as returned by GET /patient, with their ABHA record when linked. */

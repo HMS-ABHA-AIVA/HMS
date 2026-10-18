@@ -14,6 +14,7 @@ export const errorHandler = (
       success: false,
       message: err.message,
       errors: err.errors,
+      ...(err.code ? { code: err.code } : {}),
     });
   }
 

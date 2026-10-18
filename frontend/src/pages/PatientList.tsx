@@ -69,6 +69,14 @@ function AbhaCell({ r, onAddAbha }: { r: PatientRow; onAddAbha: (p: PatientRow) 
   );
 }
 
+function ageFromDob(dob: string): number {
+  const [y, m, d] = dob.split("-").map(Number) as [number, number, number];
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age--;
+  return age;
+}
+
 export function PatientList() {
   const navigate = useNavigate();
   const { session, environment, signOut } = useAuthStore();
@@ -100,6 +108,7 @@ export function PatientList() {
             id: p.id,
             name: p.name,
             mrn: p.id.slice(0, 6).toUpperCase(),
+            age: p.dateOfBirth ? ageFromDob(p.dateOfBirth) : undefined,
             mobile: p.phone,
             abha: isLinked ? "linked" : "not",
             abhaNum: p.abha?.abhaNumber,
@@ -226,7 +235,7 @@ export function PatientList() {
                     </a>
                     <div className="cell-mrn">MRN·{r.mrn}</div>
                   </td>
-                  <td>{r.age !== undefined ? `${r.age} ${r.sex ?? ""}` : "—"}</td>
+                  <td>{r.age !== undefined ? `${r.age} yrs` : "—"}</td>
                   <td className="mono">{r.mobile}</td>
                   <td>
                     <AbhaCell

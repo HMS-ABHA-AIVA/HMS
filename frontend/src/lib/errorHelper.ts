@@ -9,6 +9,34 @@ export interface MappedErrorState {
 
 type Action = MappedErrorState["action"];
 
+// Titles for backend error codes. The body is always the backend's own (already specific) message.
+const CODE_TITLES: Record<string, { tone: MappedErrorState["tone"]; title: string; action?: Action }> = {
+  ABHA_NOT_FOUND: { tone: "error", title: "No ABHA found" },
+  AADHAAR_INVALID: { tone: "error", title: "Aadhaar number not valid" },
+  AADHAAR_MOBILE_NOT_LINKED: { tone: "error", title: "No mobile linked to this Aadhaar" },
+  MOBILE_INVALID: { tone: "error", title: "Mobile number not valid" },
+  OTP_INVALID: { tone: "error", title: "Wrong OTP" },
+  OTP_EXPIRED: { tone: "pending", title: "OTP expired or no longer valid" },
+  TRANSACTION_USED: { tone: "pending", title: "This OTP was already used" },
+  OTP_COOLDOWN: { tone: "pending", title: "Please wait before requesting another OTP" },
+  TOO_MANY_ATTEMPTS: { tone: "error", title: "Too many attempts" },
+  ACCOUNT_INACTIVE: { tone: "error", title: "This Aadhaar or ABHA cannot be used" },
+  PATIENT_ALREADY_LINKED: { tone: "error", title: "Patient already has an ABHA" },
+  ABHA_LINKED_TO_OTHER_PATIENT: { tone: "error", title: "ABHA belongs to another patient" },
+  MULTIPLE_ACCOUNTS: { tone: "error", title: "More than one ABHA found" },
+  DETAILS_MISMATCH: { tone: "error", title: "Patient details do not match this ABHA" },
+  PATIENT_NOT_FOUND: { tone: "error", title: "Patient not found" },
+  NO_ABHA_LINKED: { tone: "error", title: "No ABHA linked to this patient" },
+  ABDM_UNAVAILABLE: { tone: "error", title: "ABDM is temporarily unavailable" },
+  ABDM_AUTH_REJECTED: { tone: "error", title: "ABDM rejected the hospital's credentials" },
+  ABDM_NOT_FOUND: { tone: "error", title: "ABDM could not find this record" },
+  ABDM_CONFLICT: { tone: "error", title: "ABDM reports a conflict" },
+  ABDM_REJECTED: { tone: "error", title: "ABDM could not accept this" },
+  QR_FORMAT: { tone: "error", title: "QR code could not be read" },
+  VALIDATION: { tone: "error", title: "Check the details entered" },
+  ABHA_SESSION_EXPIRED: { tone: "pending", title: "ABHA verification has ended" },
+};
+
 /**
  * Shared mapper: maps HTTP status and backend message to StopState properties without raw JSON or stack traces.
  * The backend already words ABDM/UIDAI problems for staff (wrong Aadhaar, wrong OTP, cool-down ...), so that
@@ -32,6 +60,17 @@ export function mapApiError(err: unknown, fallbackAction?: Action): MappedErrorS
       title: "Cannot reach the server",
       body: "Nothing was saved. Check your internet connection and that the hospital server is running, then try again.",
       action: fallbackAction ?? { label: "Try again" },
+    };
+  }
+
+  // The backend names the exact problem with a stable code, so each case gets its own title.
+  const known = err.code ? CODE_TITLES[err.code] : undefined;
+  if (known) {
+    return {
+      tone: known.tone,
+      title: known.title,
+      body: msg,
+      action: fallbackAction ?? known.action,
     };
   }
 

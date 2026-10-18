@@ -48,7 +48,7 @@ export const getAbhaSessionToken = (req: Request, patientId: string): string => 
   const xToken = req.cookies?.abhaXToken;
   const boundPatientId = req.signedCookies?.abhaXPatientId;
   if (!xToken || !boundPatientId || boundPatientId !== patientId) {
-    throw new ApiError(401, "ABHA verification session expired");
+    throw new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");
   }
   return xToken;
 };

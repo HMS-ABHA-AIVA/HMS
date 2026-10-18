@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { useAuthStore } from "@/store/useAuthStore";
+import { ApiError } from "@/api/client";
 import {
   listPatients,
   listPatientTransactions,
@@ -59,6 +60,7 @@ export function PatientRecord() {
   const [liveProfile, setLiveProfile] = useState<FullAbhaProfile | null>(null);
   const [qrUrl, setQrUrl] = useState<string>("");
   const [liveNote, setLiveNote] = useState<string>("");
+  const [qrNote, setQrNote] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   // In-browser only (as documented until backend can store these)
@@ -95,25 +97,30 @@ export function PatientRecord() {
 
         // 2. If ABHA is linked, try fetching live profile & live QR code
         if (currentPatient?.abha) {
-          try {
-            const profileRes = await withAbdmSession(environment, () => getAbhaProfile(patientId, environment));
-            if (active && profileRes.data) {
-              setLiveProfile(profileRes.data);
-            }
-          } catch {
-            // Live details need this ABHA to have been verified in the current session; the stored ABHA is still shown.
-            if (active) setLiveNote("Live ABHA details and QR appear once this ABHA has been verified in the current session.");
-          }
+          // Live details and QR need this ABHA to have been verified in the current session; the stored
+          // ABHA number is still shown without them. Say why when either is missing instead of hiding it.
+          const reason = (err: unknown) => (err instanceof ApiError ? err.message : "Could not reach the server.");
 
-          try {
-            const blob = await withAbdmSession(environment, () => getAbhaQrCodeBlob(patientId, environment));
-            if (active && blob) {
-              createdUrl = URL.createObjectURL(blob);
-              setQrUrl(createdUrl);
-            }
-          } catch {
-            // QR endpoint needs an active X-token for this patient
-          }
+          await Promise.all([
+            withAbdmSession(environment, () => getAbhaProfile(patientId, environment)).then(
+              (profileRes) => {
+                if (active && profileRes.data) setLiveProfile(profileRes.data);
+              },
+              (err) => {
+                if (active) setLiveNote(`Live ABHA details unavailable: ${reason(err)}`);
+              },
+            ),
+            withAbdmSession(environment, () => getAbhaQrCodeBlob(patientId, environment)).then(
+              (blob) => {
+                if (!active) return;
+                createdUrl = URL.createObjectURL(blob);
+                setQrUrl(createdUrl);
+              },
+              (err) => {
+                if (active) setQrNote(`QR unavailable: ${reason(err)}`);
+              },
+            ),
+          ]);
         }
       } catch (err) {
         console.error("Error loading patient record:", err);
@@ -180,7 +187,7 @@ export function PatientRecord() {
             <div>
               <h1 className="osh-h1">{pName}</h1>
               <p className="osh-sub" style={{ margin: 0 }}>
-                {liveProfile?.dob ? `DOB: ${liveProfile.dob}` : patient ? "Age and gender not recorded" : "No patient with this id at your facility."}
+                {patient?.dateOfBirth ? `DOB: ${patient.dateOfBirth}` : liveProfile?.dob ? `DOB: ${liveProfile.dob}` : patient ? "Date of birth not recorded" : "No patient with this id at your facility."}
               </p>
             </div>
             <div className="rec-meta">
@@ -252,6 +259,19 @@ export function PatientRecord() {
                     {liveNote ||
                       "These details and the QR are read from ABDM each time this page opens. They are not stored on this computer."}
                   </p>
+                  {qrNote && (
+                    <p className="abha-note" style={{ color: "var(--error)" }}>
+                      {qrNote}
+                    </p>
+                  )}
+                  {(liveNote || qrNote) && (
+                    <p className="abha-note">
+                      <a style={{ cursor: "pointer" }} onClick={() => navigate(`/register?patientId=${patientId}&refresh=1`)}>
+                        Verify this ABHA again
+                      </a>{" "}
+                      to load the live details and QR code.
+                    </p>
+                  )}
 
                   <div style={{ display: "flex", gap: 10 }}>
                     <button className="btn btn-primary" onClick={handlePrint}>

@@ -6,10 +6,13 @@ const BASE: string = import.meta.env.VITE_API_URL ?? '/api';
 
 export class ApiError extends Error {
   status: number;
+  /** Stable reason from the backend (e.g. "ABHA_NOT_FOUND"), when it gave one. */
+  code: string | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -45,7 +48,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     // Backend auth middleware answers "unauthorized access"; ABDM-token problems say
     // "ABDM authentication required" and must not log the user out.
     if (res.status === 401 && /unauthor/i.test(message)) onSessionExpired?.();
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, typeof payload?.code === 'string' ? payload.code : undefined);
   }
 
   return payload as T;
@@ -74,7 +77,7 @@ export async function getBlob(path: string): Promise<Blob> {
           ? 'The server is unavailable. Check that the backend is running.'
           : `Request failed (${res.status})`;
     if (res.status === 401 && /unauthor/i.test(message)) onSessionExpired?.();
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, typeof payload?.code === 'string' ? payload.code : undefined);
   }
 
   return await res.blob();
