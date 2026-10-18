@@ -27,36 +27,6 @@ export function SignIn() {
     setLoading(true);
 
     try {
-      // Demo bypass credentials
-      const isDemo =
-        import.meta.env.DEV &&
-        ((email.trim().toLowerCase() === "admin@hospital.com" &&
-          (password === "password" || password === "admin123" || password === "demo")) ||
-        email.trim().toLowerCase() === "demo@example.com");
-
-      if (isDemo) {
-        if (tab === "staff") {
-          const demoStaffSession = {
-            kind: "staff" as const,
-            id: "st7",
-            name: "Asha Verma",
-            email: email.trim(),
-          };
-          useAuthStore.setState({ session: demoStaffSession });
-          navigate("/", { replace: true });
-          return;
-        } else {
-          const demoFacSession = {
-            kind: "facility" as const,
-            name: "City General Hospital",
-            email: email.trim(),
-            hfrId: "IN2410001234",
-          };
-          useAuthStore.setState({ session: demoFacSession });
-          navigate("/facility-setup", { replace: true });
-          return;
-        }
-      }
 
       if (isRegisteringFacility) {
         if (!facName.trim() || !email.trim() || !facHfrId.trim() || !password.trim()) {

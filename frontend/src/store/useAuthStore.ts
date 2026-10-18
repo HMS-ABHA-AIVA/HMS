@@ -55,10 +55,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
 // A lapsed login cookie: forget the session and reload so the previous user's data leaves memory.
 setSessionExpiredHandler(() => {
-  const current = useAuthStore.getState().session;
-  if ((current?.kind === 'staff' && current.id === 'st7') || current?.email === 'admin@hospital.com' || current?.name === 'Asha Verma') {
-    return;
-  }
   clearSession();
   resetAbdmSession();
   window.location.assign('/login');
