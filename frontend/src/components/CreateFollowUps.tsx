@@ -10,11 +10,7 @@ import { withAbdmSession } from "@/api/abdmSession";
 import { StopState } from "@/pages/ErrorStates";
 import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
 
-// ABDM rules for an ABHA address name: 4-18 characters, letters/digits, at most one "." and one "_".
-const isValidAddressName = (value: string) =>
-  /^(?=.{4,18}$)[a-z0-9]+([._][a-z0-9]+)*$/i.test(value) && (value.match(/\./g)?.length ?? 0) <= 1 && (value.match(/_/g)?.length ?? 0) <= 1;
-
-const OTP_RESEND_SECONDS = 30;
+import { ABHA_ADDRESS_POLICY, MAX_OTP_RESENDS, OTP_RESEND_SECONDS, isValidAbhaAddressName } from "@/lib/abhaRules";
 
 /**
  * Shown right after an ABHA is created. Two optional steps ABDM defines for enrolment:
@@ -25,6 +21,7 @@ export function CreateFollowUps({
   transactionId,
   mobile,
   mobileVerified,
+  abhaNumber,
   abhaAddress,
   environment,
   onDone,
@@ -32,15 +29,18 @@ export function CreateFollowUps({
   transactionId: string;
   mobile: string;
   mobileVerified: boolean;
+  abhaNumber: string;
   abhaAddress: string | null;
   environment: AbdmEnvironment;
-  onDone: () => void;
+  /** Called with the ABHA address as it stands when the user continues. */
+  onDone: (abhaAddress: string | null) => void;
 }) {
   const [verified, setVerified] = useState(mobileVerified);
   const [otpSent, setOtpSent] = useState(false);
   const [otpMessage, setOtpMessage] = useState("");
   const [otp, setOtp] = useState("");
   const [resendIn, setResendIn] = useState(0);
+  const [resendCount, setResendCount] = useState(0);
 
   const [address, setAddress] = useState(abhaAddress);
   const [choosing, setChoosing] = useState(false);
@@ -68,14 +68,17 @@ export function CreateFollowUps({
     }
   }
 
-  const sendMobileOtp = () =>
-    run(async () => {
+  const sendMobileOtp = (isResend = false) => {
+    if (isResend && resendCount >= MAX_OTP_RESENDS) return Promise.resolve();
+    return run(async () => {
       const res = await withAbdmSession(environment, () => requestEnrolMobileOtp({ transactionId, mobile, environment }));
       setOtpMessage(res.message);
       setOtpSent(true);
       setOtp("");
+      setResendCount(isResend ? resendCount + 1 : 0);
       setResendIn(OTP_RESEND_SECONDS);
     });
+  };
 
   const confirmMobileOtp = () => {
     const clean = otp.replace(/\D/g, "");
@@ -105,9 +108,7 @@ export function CreateFollowUps({
     });
 
   const customName = custom.trim().toLowerCase();
-  const customError = customName && !isValidAddressName(customName)
-    ? "4 to 18 characters: letters and numbers, with at most one dot and one underscore."
-    : "";
+  const customError = customName && !isValidAbhaAddressName(customName) ? "This does not follow the ABHA address rules below." : "";
 
   return (
     <div className="card-form">
@@ -116,6 +117,12 @@ export function CreateFollowUps({
         <span className="dot ok" />
         The ABHA is created and linked to this patient. Two optional steps remain.
       </p>
+      <div className="kv" style={{ marginBottom: 16 }}>
+        <div className="k">ABHA number</div>
+        <div className="mono">{abhaNumber}</div>
+        <div className="k">ABHA address</div>
+        <div className="mono">{address ?? "—"}</div>
+      </div>
 
       {error && (
         <div style={{ marginBottom: 14 }}>
@@ -135,7 +142,7 @@ export function CreateFollowUps({
             +91 {mobile} is not the mobile linked to the Aadhaar, so it must be verified with an OTP.
           </p>
           {!otpSent ? (
-            <button className="btn btn-ghost" type="button" onClick={sendMobileOtp} disabled={busy}>
+            <button className="btn btn-ghost" type="button" onClick={() => sendMobileOtp()} disabled={busy}>
               {busy ? "Sending..." : "Send OTP to this mobile"}
             </button>
           ) : (
@@ -157,8 +164,17 @@ export function CreateFollowUps({
                 <button className="btn btn-primary" type="button" onClick={confirmMobileOtp} disabled={busy}>
                   {busy ? "Verifying..." : "Verify mobile"}
                 </button>
-                <button className="btn btn-ghost" type="button" onClick={sendMobileOtp} disabled={busy || resendIn > 0}>
-                  {resendIn > 0 ? `Resend OTP in ${resendIn}s` : "Resend OTP"}
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => sendMobileOtp(true)}
+                  disabled={busy || resendIn > 0 || resendCount >= MAX_OTP_RESENDS}
+                >
+                  {resendCount >= MAX_OTP_RESENDS
+                    ? "Resend limit reached"
+                    : resendIn > 0
+                      ? `Resend OTP in ${resendIn}s`
+                      : `Resend OTP (${MAX_OTP_RESENDS - resendCount} left)`}
                 </button>
               </div>
             </>
@@ -195,6 +211,11 @@ export function CreateFollowUps({
               disabled={busy}
             />
             {customError && <div className="hint" style={{ color: "var(--error)" }}>{customError}</div>}
+            <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {ABHA_ADDRESS_POLICY.map((rule) => (
+                <li key={rule}>{rule}</li>
+              ))}
+            </ul>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button
@@ -213,7 +234,7 @@ export function CreateFollowUps({
       )}
 
       <div className="form-actions" style={{ justifyContent: "flex-start", marginTop: 24 }}>
-        <button className="btn btn-primary" type="button" onClick={onDone} disabled={busy}>
+        <button className="btn btn-primary" type="button" onClick={() => onDone(address)} disabled={busy}>
           Continue
         </button>
       </div>

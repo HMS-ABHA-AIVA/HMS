@@ -24,8 +24,7 @@ import { withAbdmSession } from "@/api/abdmSession";
 import { StopState } from "@/pages/ErrorStates";
 import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
 
-// ABDM allows a new OTP for the same number only after about 30 seconds.
-const OTP_RESEND_SECONDS = 30;
+import { OTP_RESEND_SECONDS, MAX_OTP_RESENDS } from "@/lib/abhaRules";
 
 // 6 = optional follow-ups after creating an ABHA (verify mobile, choose ABHA address)
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
@@ -68,6 +67,7 @@ export function RegisterPatient() {
   const [created, setCreated] = useState<{
     transactionId: string;
     mobileVerified: boolean;
+    abhaNumber: string;
     abhaAddress: string | null;
   } | null>(null);
   const [mobileAccounts, setMobileAccounts] = useState<AbhaAccountItem[]>([]);
@@ -78,6 +78,10 @@ export function RegisterPatient() {
   const [errorState, setErrorState] = useState<MappedErrorState | null>(null);
 
   const [resendIn, setResendIn] = useState(0);
+  // resends used for the current OTP request (NHA: at most 2, each after 60 s)
+  const [resendCount, setResendCount] = useState(0);
+  // the ABHA that was just created / linked, shown on the success screen
+  const [linked, setLinked] = useState<{ abhaNumber: string; abhaAddress: string | null } | null>(null);
 
   // Counts down the OTP resend cool-down.
   useEffect(() => {
@@ -195,6 +199,7 @@ export function RegisterPatient() {
     setLoading(true);
     try {
       await requestOtp();
+      setResendCount(0);
       setOtp("");
       setStep(4);
     } catch (err) {
@@ -224,10 +229,12 @@ export function RegisterPatient() {
   }
 
   async function handleResendOtp() {
+    if (resendCount >= MAX_OTP_RESENDS) return;
     setErrorState(null);
     setLoading(true);
     try {
       await requestOtp();
+      setResendCount((n) => n + 1);
       setOtp("");
     } catch (err) {
       setErrorState(mapApiError(err));
@@ -253,11 +260,12 @@ export function RegisterPatient() {
       setLoading(true);
       try {
         await withAbdmSession(environment, async () => {
-          await verifyAbhaMobileUser({
+          const res = await verifyAbhaMobileUser({
             abhaNumber: selectedAbhaNumber,
             transactionId,
             environment,
           });
+          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
         });
         setStep(5);
       } catch (err) {
@@ -293,26 +301,30 @@ export function RegisterPatient() {
             setCreated({
               transactionId: res.data.transactionId,
               mobileVerified: res.data.mobileVerified,
+              abhaNumber: res.data.abhaNumber,
               abhaAddress: res.data.abhaAddress,
             });
             setStep(6);
           } else {
+            setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
             setStep(5);
           }
         } else if (mode === "link_aadhaar") {
-          await confirmAbhaLink({
+          const res = await confirmAbhaLink({
             transactionId,
             otp: cleanOtp,
             environment,
           });
+          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
           setStep(5);
         } else if (mode === "link_number") {
-          await confirmAbhaNumberOtp({
+          const res = await confirmAbhaNumberOtp({
             transactionId,
             otp: cleanOtp,
             channel,
             environment,
           });
+          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
           setStep(5);
         } else if (mode === "link_mobile") {
             // Confirm OTP and retrieve linked accounts
@@ -324,11 +336,12 @@ export function RegisterPatient() {
             const accounts = res.data?.accounts || [];
             if (accounts.length === 1) {
               // Only 1 account: link directly
-              await verifyAbhaMobileUser({
+              const linkedRes = await verifyAbhaMobileUser({
                 abhaNumber: accounts[0].ABHANumber,
                 transactionId: res.data.transactionId,
                 environment,
               });
+              setLinked({ abhaNumber: linkedRes.data.abhaNumber, abhaAddress: linkedRes.data.abhaAddress });
               setStep(5);
             } else if (accounts.length > 1) {
               setMobileAccounts(accounts);
@@ -740,8 +753,17 @@ export function RegisterPatient() {
                 Start again
               </button>
               {mobileAccounts.length === 0 && (
-                <button className="btn btn-ghost" type="button" onClick={handleResendOtp} disabled={loading || resendIn > 0}>
-                  {resendIn > 0 ? `Resend OTP in ${resendIn}s` : "Resend OTP"}
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={loading || resendIn > 0 || resendCount >= MAX_OTP_RESENDS}
+                >
+                  {resendCount >= MAX_OTP_RESENDS
+                    ? "Resend limit reached"
+                    : resendIn > 0
+                      ? `Resend OTP in ${resendIn}s`
+                      : `Resend OTP (${MAX_OTP_RESENDS - resendCount} left)`}
                 </button>
               )}
               <button className="btn btn-primary" type="button" onClick={handleVerifyOtp} disabled={loading}>
@@ -756,9 +778,13 @@ export function RegisterPatient() {
             transactionId={created.transactionId}
             mobile={linkMobileNumber.replace(/\D/g, "")}
             mobileVerified={created.mobileVerified}
+            abhaNumber={created.abhaNumber}
             abhaAddress={created.abhaAddress}
             environment={environment}
-            onDone={() => setStep(5)}
+            onDone={(finalAddress) => {
+              setLinked({ abhaNumber: created.abhaNumber, abhaAddress: finalAddress });
+              setStep(5);
+            }}
           />
         )}
 
@@ -769,6 +795,14 @@ export function RegisterPatient() {
               <span className="dot ok" />
               {refresh ? "ABHA verified. Live details and the QR code are now available on the record." : "ABHA linked to this patient."}
             </p>
+            {linked && (
+              <div className="kv" style={{ marginBottom: 14 }}>
+                <div className="k">ABHA number</div>
+                <div className="mono">{linked.abhaNumber}</div>
+                <div className="k">ABHA address</div>
+                <div className="mono">{linked.abhaAddress ?? "—"}</div>
+              </div>
+            )}
             <div className="form-actions" style={{ justifyContent: "flex-start", gap: 12 }}>
               <button className="btn btn-primary" onClick={() => navigate(`/record/${patientId}`)}>
                 View patient record

@@ -90,7 +90,7 @@ export const abhaAddressSuggestionsQuerySchema = z.object({
 
 export const createAbhaAddressSchema = z.object({
     transactionId: z.uuid("Invalid transaction ID"),
-    abhaAddress: z.string().trim().min(4, "ABHA address must be at least 4 characters").max(60, "ABHA address is too long"),
+    abhaAddress: z.string().trim().min(8, "ABHA address must be at least 8 characters").max(60, "ABHA address is too long"),
     environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
 });
 

@@ -680,9 +680,9 @@ export const verifyEnrolMobileService = async (transactionId: string, facilityId
   return { transactionId: transaction.id, message: abdmResponse.message ?? "Mobile number verified" };
 };
 
-// ABHA address rules (ABDM): 4-18 characters, letters/digits, at most one "." and one "_", not at the ends.
+// ABHA address rules (NHA M1 sheet): 8-18 characters, letters/digits, at most one "." and one "_", not at the ends.
 export const isValidAbhaAddressName = (value: string) =>
-  /^(?=.{4,18}$)[a-z0-9]+([._][a-z0-9]+)*$/i.test(value) && (value.match(/\./g)?.length ?? 0) <= 1 && (value.match(/_/g)?.length ?? 0) <= 1;
+  /^(?=.{8,18}$)[a-z0-9]+([._][a-z0-9]+)*$/i.test(value) && (value.match(/\./g)?.length ?? 0) <= 1 && (value.match(/_/g)?.length ?? 0) <= 1;
 
 export const getAbhaAddressSuggestionsService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment) => {
   const transaction = await loadEnrolmentForFollowUp(transactionId, facilityId);
@@ -702,7 +702,7 @@ export const createAbhaAddressService = async (transactionId: string, facilityId
   // Suggestions come back as "name@domain"; ABDM wants just the name part.
   const name = abhaAddress.split("@")[0] ?? "";
   if (!isValidAbhaAddressName(name)) {
-    throw new ApiError(400, "ABHA address must be 4-18 characters: letters and numbers, with at most one dot and one underscore.", [], "ABHA_ADDRESS_INVALID");
+    throw new ApiError(400, "ABHA address must be 8-18 characters: letters and numbers, with at most one dot and one underscore, not at the start or end.", [], "ABHA_ADDRESS_INVALID");
   }
 
   const abdmResponse = await createAbhaAddress({
