@@ -2,8 +2,9 @@ import type { Response, NextFunction } from "express";
 import type { ZodType } from "zod";
 import { ApiError } from "../../../common/errors/appError.js";
 import type { userAuthRequest } from "../../../common/middlewares/verifyUserJwt.js"
-import { abdmTokenRetrievalSchema, aadhaarOtpRequestSchema, aadharOtpVerifySchema, existingAbhaAadhaarOtpRequestSchema, existingAbhaAadhaarOtpVerifySchema, existingAbhaMobileOtpRequestSchema, existingAbhaMobileOtpVerifySchema, verifyExistingAbhaMobileUserSchema,getAbhaProfileSchema } from "../../../common/validators/m1.validator.js"
-import { abdmTokenRetrievalService, aadhaarOtpRequestService, aadhaarOtpVerifyService, requestExistingAbhaAadhaarOtpService, verifyExistingAbhaAadhaarOtpService, requestExistingAbhaMobileOtpService, verifyExistingAbhaMobileOtpService, verifyExistingAbhaMobileUserService,generateAbhaQrService, getAbhaProfileService } from "./m1.service.js";
+import { abdmTokenRetrievalSchema, aadhaarOtpRequestSchema, aadharOtpVerifySchema, existingAbhaAadhaarOtpRequestSchema, existingAbhaAadhaarOtpVerifySchema, existingAbhaMobileOtpRequestSchema, existingAbhaMobileOtpVerifySchema, verifyExistingAbhaMobileUserSchema,getAbhaProfileSchema, enrolMobileRequestSchema, enrolMobileVerifySchema, abhaAddressSuggestionsQuerySchema, createAbhaAddressSchema, abhaNumberOtpRequestSchema, abhaNumberOtpVerifySchema } from "../../../common/validators/m1.validator.js"
+import { abdmTokenRetrievalService, aadhaarOtpRequestService, aadhaarOtpVerifyService, requestExistingAbhaAadhaarOtpService, verifyExistingAbhaAadhaarOtpService, requestExistingAbhaMobileOtpService, verifyExistingAbhaMobileOtpService, verifyExistingAbhaMobileUserService,generateAbhaQrService, getAbhaProfileService, getAbhaCardService, requestEnrolMobileVerificationService, verifyEnrolMobileService, getAbhaAddressSuggestionsService, createAbhaAddressService, requestAbhaNumberOtpService, verifyAbhaNumberOtpService } from "./m1.service.js";
+import { prisma } from "../../../config/db.js";
 import { setAbdmSessionCookies, setAbhaSessionCookies, setTTokenCookie, getAbhaSessionToken } from "../../../common/utils/abdmCookies.js";
 
 // Validates request input and returns the typed result, or throws a 400 with every zod message.
@@ -95,6 +96,9 @@ export const aadhaarOtpVerifyController = async (req: userAuthRequest, res: Resp
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
         isNew: resultData.isNew,
+        transactionId: resultData.transactionId,
+        mobileVerified: resultData.mobileVerified,
+        hasFollowUp: resultData.hasFollowUp,
       },
     });
   } catch (error) {
@@ -271,6 +275,176 @@ export const getAbhaProfileController = async (req: userAuthRequest, res: Respon
       status: "success",
       message: "ABHA profile retrieved successfully",
       data: resultData,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// enrolment follow-ups: verify the mobile number, choose an ABHA address
+// ---------------------------------------------------------------------------
+
+export const enrolMobileRequestController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { transactionId, mobile, environment } = parseOrThrow(enrolMobileRequestSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+
+    const resultData = await requestEnrolMobileVerificationService(transactionId, user.facilityId, abdmAccessToken, environment, mobile);
+
+    return res.status(200).json({
+      status: "success",
+      message: resultData.message,
+      data: { transactionId: resultData.transactionId },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const enrolMobileVerifyController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { transactionId, otp, environment } = parseOrThrow(enrolMobileVerifySchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+
+    const resultData = await verifyEnrolMobileService(transactionId, user.facilityId, abdmAccessToken, environment, otp);
+
+    return res.status(200).json({
+      status: "success",
+      message: resultData.message,
+      data: { transactionId: resultData.transactionId },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const abhaAddressSuggestionsController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { transactionId, environment } = parseOrThrow(abhaAddressSuggestionsQuerySchema, req.query, "query parameters");
+    const abdmAccessToken = requireAbdmAccessToken(req);
+
+    const resultData = await getAbhaAddressSuggestionsService(transactionId, user.facilityId, abdmAccessToken, environment);
+
+    return res.status(200).json({
+      status: "success",
+      message: "ABHA address suggestions retrieved",
+      data: resultData,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createAbhaAddressController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { transactionId, abhaAddress, environment } = parseOrThrow(createAbhaAddressSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+
+    const resultData = await createAbhaAddressService(transactionId, user.facilityId, abdmAccessToken, environment, abhaAddress);
+
+    return res.status(200).json({
+      status: "success",
+      message: "ABHA address created",
+      data: resultData,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// link an existing ABHA by ABHA number
+// ---------------------------------------------------------------------------
+
+export const abhaNumberOtpRequestController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { patientId, abhaNumber, channel, environment } = parseOrThrow(abhaNumberOtpRequestSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+
+    const resultData = await requestAbhaNumberOtpService(patientId, user.facilityId, abdmAccessToken, environment, abhaNumber, channel);
+
+    return res.status(200).json({
+      status: "success",
+      message: resultData.message,
+      data: { transactionId: resultData.transactionId },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const abhaNumberOtpVerifyController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { transactionId, otp, channel, environment } = parseOrThrow(abhaNumberOtpVerifySchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+
+    const resultData = await verifyAbhaNumberOtpService(transactionId, user.facilityId, abdmAccessToken, environment, otp, channel);
+
+    setAbhaSessionCookies(res, resultData.token, resultData.patientId, resultData.expiresIn);
+
+    return res.status(200).json({
+      status: "success",
+      message: resultData.message,
+      data: {
+        patientId: resultData.patientId,
+        transactionId: resultData.transactionId,
+        abhaNumber: resultData.abhaNumber,
+        abhaAddress: resultData.abhaAddress,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// ABHA card
+// ---------------------------------------------------------------------------
+
+export const getAbhaCardController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { patientId, environment } = parseOrThrow(getAbhaProfileSchema, req.query, "query parameters");
+    const abdmAccessToken = requireAbdmAccessToken(req);
+    const abhaXToken = getAbhaSessionToken(req, patientId);
+
+    const card = await getAbhaCardService(patientId, user.facilityId, abdmAccessToken, abhaXToken, environment);
+
+    res.setHeader("Content-Type", card.contentType);
+    res.setHeader("Cache-Control", "private, no-store");
+
+    return res.status(200).send(card.data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// audit trail (read-only, scoped to the caller's facility)
+// ---------------------------------------------------------------------------
+
+export const listAbhaAuditController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const patientId = typeof req.query.patientId === "string" ? req.query.patientId : undefined;
+
+    const entries = await prisma.abhaAuditLog.findMany({
+      where: { facilityId: user.facilityId, ...(patientId ? { patientId } : {}) },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+
+    return res.status(200).json({
+      status: "success",
+      message: "ABHA audit trail retrieved",
+      data: entries,
     });
   } catch (error) {
     next(error);

@@ -87,7 +87,8 @@ export const listPatientTransactions = (patientId: string) =>
 
 export const retrieveAbdmToken = (environment: AbdmEnvironment) => post<{ message: string }>('/abha/retrieve', { environment });
 
-export const requestAbhaCreateOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment }) =>
+// `consent: true` = the patient accepted the consent text shown; the backend refuses to send an OTP without it.
+export const requestAbhaCreateOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment; consent: true }) =>
   post<Envelope<{ txnId: string; transactionId: string }>>('/abha/create/aadhar/request', body);
 
 export interface AbhaProfile {
@@ -100,16 +101,61 @@ export const verifyAbhaCreateOtp = (body: {
   otp: string;
   mobile: string;
   environment: AbdmEnvironment;
-}) => post<Envelope<AbhaProfile & { patientId: string; isNew: boolean }>>('/abha/create/aadhar/verify', body);
+}) =>
+  post<
+    Envelope<
+      AbhaProfile & {
+        patientId: string;
+        isNew: boolean;
+        /** Use with the follow-up calls below (mobile verification, ABHA address). */
+        transactionId: string;
+        /** false when the mobile is not the Aadhaar-linked one and still has to be verified by OTP. */
+        mobileVerified: boolean;
+        hasFollowUp: boolean;
+      }
+    >
+  >('/abha/create/aadhar/verify', body);
 
-export const requestAbhaLinkOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment }) =>
+// ---- After creation: verify the mobile number, choose an ABHA address -----------------------------
+
+export const requestEnrolMobileOtp = (body: { transactionId: string; mobile: string; environment: AbdmEnvironment }) =>
+  post<Envelope<{ transactionId: string }>>('/abha/create/mobile/request', body);
+
+export const verifyEnrolMobileOtp = (body: { transactionId: string; otp: string; environment: AbdmEnvironment }) =>
+  post<Envelope<{ transactionId: string }>>('/abha/create/mobile/verify', body);
+
+export const getAbhaAddressSuggestions = (transactionId: string, environment: AbdmEnvironment) =>
+  get<Envelope<{ suggestions: string[] }>>(`/abha/create/address/suggestions?transactionId=${encodeURIComponent(transactionId)}&environment=${environment}`);
+
+export const createAbhaAddress = (body: { transactionId: string; abhaAddress: string; environment: AbdmEnvironment }) =>
+  post<Envelope<{ abhaAddress: string }>>('/abha/create/address', body);
+
+export const requestAbhaLinkOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment; consent: true }) =>
   post<Envelope<{ transactionId: string }>>('/abha/verify/aadhar/request', body);
 
 export const confirmAbhaLink = (body: { transactionId: string; otp: string; environment: AbdmEnvironment }) =>
   post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/aadhar/confirm', body);
 
+// ABHA number flow: the OTP goes to the Aadhaar-linked mobile or to the mobile registered with the ABHA
+export type AbhaLoginChannel = 'aadhaar' | 'mobile';
+
+export const requestAbhaNumberOtp = (body: {
+  patientId: string;
+  abhaNumber: string;
+  channel: AbhaLoginChannel;
+  environment: AbdmEnvironment;
+  consent: true;
+}) => post<Envelope<{ transactionId: string }>>('/abha/verify/number/request', body);
+
+export const confirmAbhaNumberOtp = (body: {
+  transactionId: string;
+  otp: string;
+  channel: AbhaLoginChannel;
+  environment: AbdmEnvironment;
+}) => post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/number/confirm', body);
+
 // Mobile verification flow (Step 1, Step 2, Step 3)
-export const requestAbhaMobileOtp = (body: { patientId: string; mobile: string; environment: AbdmEnvironment }) =>
+export const requestAbhaMobileOtp = (body: { patientId: string; mobile: string; environment: AbdmEnvironment; consent: true }) =>
   post<Envelope<{ transactionId: string; txnId: string }>>('/abha/verify/mobile/request', body);
 
 export interface AbhaAccountItem {
@@ -155,3 +201,6 @@ export const getAbhaProfile = (patientId: string, environment: AbdmEnvironment =
 export const getAbhaQrCodeBlob = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
   getBlob(`/abha/profile/qr?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);
 
+
+export const getAbhaCardBlob = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
+  getBlob(`/abha/profile/card?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);

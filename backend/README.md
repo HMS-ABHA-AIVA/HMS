@@ -54,8 +54,16 @@ ABDM gateway tokens last 20 minutes; when a route answers `401 ABDM authenticati
 | `POST` | `/api/abha/verify/mobile/request` | body `{ patientId, mobile, environment }` | Send a mobile OTP to find existing ABHA accounts. |
 | `POST` | `/api/abha/verify/mobile/confirm` | body `{ transactionId, otp, environment }` | Verify the OTP; returns the account list. |
 | `POST` | `/api/abha/verify/mobile/user` | body `{ abhaNumber, transactionId, environment }` | Choose an account and link it to the patient. |
+| `POST` | `/api/abha/create/mobile/request` | body `{ transactionId, mobile, environment }` | After creating an ABHA: send an OTP to verify the mobile number to link (when it is not the Aadhaar-linked one). |
+| `POST` | `/api/abha/create/mobile/verify` | body `{ transactionId, otp, environment }` | Verify that OTP. |
+| `GET` | `/api/abha/create/address/suggestions` | query `transactionId, environment` | ABHA address suggestions for the new ABHA. |
+| `POST` | `/api/abha/create/address` | body `{ transactionId, abhaAddress, environment }` | Create the chosen ABHA address (4–18 chars, at most one `.` and one `_`). |
+| `POST` | `/api/abha/verify/number/request` | body `{ patientId, abhaNumber, channel, environment, consent }` | Link by ABHA number; `channel` is `aadhaar` or `mobile` (where the OTP goes). |
+| `POST` | `/api/abha/verify/number/confirm` | body `{ transactionId, otp, channel, environment }` | Verify the OTP and link the ABHA. |
+| `GET` | `/api/abha/profile/card` | query `patientId, environment` | Download the ABHA card (PNG/PDF). Same session restriction as the QR. |
+| `GET` | `/api/abha/audit` | query `patientId?` | ABHA audit trail for the facility (who, action, outcome, error code, IP; no personal data). |
 | `GET` | `/api/abha/profile` | query `patientId, environment` | Live ABHA profile. Only works for the patient whose ABHA was verified in this session. |
 | `GET` | `/api/abha/profile/qr` | query `patientId, environment` | Live ABHA QR image, same restriction as the profile. |
 
-`patientId` and `transactionId` must be UUIDs. ABDM/UIDAI validation messages (wrong Aadhaar, wrong OTP, 30-second
+Every OTP-request route also needs `consent: true` (the patient accepted the consent text). `patientId` and `transactionId` must be UUIDs. ABDM/UIDAI validation messages (wrong Aadhaar, wrong OTP, 30-second
 OTP cool-down) are returned as-is with status 400/422/429.

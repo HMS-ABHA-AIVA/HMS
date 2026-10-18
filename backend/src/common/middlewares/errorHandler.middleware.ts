@@ -10,6 +10,7 @@ export const errorHandler = (
   next: NextFunction,
 ) => {
   if (err instanceof ApiError) {
+    res.locals.errorCode = err.code; // read by the ABHA audit trail
     return res.status(err.statusCode).json({
       success: false,
       message: err.message,

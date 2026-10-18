@@ -3,7 +3,7 @@ import { ApiError } from "../../../common/errors/appError.js";
 import { generateAbdmSessionToken } from "../../../common/client/facility.client.js";
 import { decrypt, encryptWithAbdmPublicKey } from "../../../common/utils/encryption.js";
 import { findAbhaMismatches, type AbhaDemographics } from "../../../common/utils/abhaMatch.js";
-import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, ABHA_ENROLLMENT_CONSENT } from "../../../common/client/abdm.client.js";
+import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, getAbhaCard, requestEnrolMobileOtp, verifyEnrolMobileOtp, getAbhaAddressSuggestions, createAbhaAddress, requestAbhaNumberOtp, verifyAbhaNumberOtp, ABHA_ENROLLMENT_CONSENT, HOSPITAL_LINK_CONSENT, getCmId, type AbhaLoginChannel } from "../../../common/client/abdm.client.js";
 
 type Environment = "SANDBOX" | "PRODUCTION";
 
@@ -220,6 +220,9 @@ export const aadhaarOtpRequestService = async (patientId: string, facilityId: st
       purpose: "ENROLLMENT",
       status: "PENDING",
       expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
+      consentCode: ABHA_ENROLLMENT_CONSENT.code,
+      consentVersion: ABHA_ENROLLMENT_CONSENT.version,
+      consentAcceptedAt: new Date(),
     },
   });
 
@@ -260,11 +263,16 @@ export const aadhaarOtpVerifyService = async (transactionId: string, facilityId:
 
   const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, abhaAddress, abdmResponse.ABHAProfile, true);
 
-  // Mark transaction as completed and persist the consent that was sent to ABDM
+  // ABDM treats the mobile as verified when it is the Aadhaar-linked one; otherwise it must be verified by OTP.
+  const mobileVerified = digitsOnly(String(abdmResponse.ABHAProfile.mobile ?? "")) === digitsOnly(mobile);
+
+  // Mark transaction as completed; keep ABDM's enrolment txnId for the mobile-verification / address follow-ups.
   await setTransactionStatus(transaction.id, "COMPLETED", {
     consentCode: ABHA_ENROLLMENT_CONSENT.code,
     consentVersion: ABHA_ENROLLMENT_CONSENT.version,
     consentAcceptedAt: new Date(),
+    enrolTxnId: typeof abdmResponse.txnId === "string" ? abdmResponse.txnId : null,
+    mobileVerified,
   });
 
   // Return only what the application needs (not the ABDM photo/address payload).
@@ -273,62 +281,24 @@ export const aadhaarOtpVerifyService = async (transactionId: string, facilityId:
     abhaNumber: abhaPatient.abhaNumber,
     abhaAddress: abhaPatient.abhaAddress,
     isNew: Boolean(abdmResponse.isNew),
+    transactionId: transaction.id,
+    mobileVerified,
+    hasFollowUp: typeof abdmResponse.txnId === "string",
     // Enrolment already authenticates the user; keep the X-token so the profile / QR work straight away.
     xToken: (abdmResponse.tokens?.token as string | undefined) ?? null,
     xTokenExpiresIn: abdmResponse.tokens?.expiresIn as number | undefined,
   };
 };
 
-// ---------------------------------------------------------------------------
-// verification (link existing ABHA) - aadhaar
-// ---------------------------------------------------------------------------
-
-export const requestExistingAbhaAadhaarOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string) => {
-  const patient = await findPatientInFacility(patientId, facilityId);
-
-  const encryptedAadhaar = await encryptForAbdm(environment, abdmAccessToken, aadhaar);
-
-  const abdmResponse = await requestExistingAbhaAadhaarOtp({
-    accessToken: abdmAccessToken,
-    encryptedAadhaar,
-    environment,
-  });
-
-  if (!abdmResponse.txnId) {
-    throw new ApiError(502, "ABDM did not return a transaction ID");
-  }
-
-  const transaction = await prisma.abhaTransaction.create({
-    data: {
-      txnId: abdmResponse.txnId,
-      patientId: patient.id,
-      facilityId,
-      purpose: "VERIFICATION",
-      status: "PENDING",
-      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
-    },
-  });
-
-  return {
-    transactionId: transaction.id,
-    txnId: transaction.txnId,
-    message: abdmResponse.message,
-  };
-};
-
-
-export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string) => {
-  const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
-
-  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
-
-  const abdmResponse = await verifyExistingAbhaAadhaarOtp({
-    accessToken: abdmAccessToken,
-    txnId: transaction.txnId,
-    encryptedOtp,
-    environment,
-  });
-
+// Shared by every "login with an OTP, then link" flow (Aadhaar, ABHA number): ABDM answers with a T-token and the
+// account list; the X-token is issued by "verify user" for the chosen ABHA. Then the profile is read, the patient's
+// name/DOB are compared with it, and the ABHA is linked.
+const finishLoginVerification = async (
+  transaction: { id: string; patientId: string; txnId: string },
+  abdmResponse: { txnId?: string; authResult?: string; message?: string; token?: string; expiresIn?: number; accounts?: { ABHANumber: string }[] },
+  abdmAccessToken: string,
+  environment: Environment,
+) => {
   if (abdmResponse.authResult !== "success") {
     throw new ApiError(422, abdmResponse.message || "The OTP could not be verified. Check it and try again.", [], "OTP_INVALID");
   }
@@ -395,6 +365,63 @@ export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string,
   };
 };
 
+
+// ---------------------------------------------------------------------------
+// verification (link existing ABHA) - aadhaar
+// ---------------------------------------------------------------------------
+
+export const requestExistingAbhaAadhaarOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string) => {
+  const patient = await findPatientInFacility(patientId, facilityId);
+
+  const encryptedAadhaar = await encryptForAbdm(environment, abdmAccessToken, aadhaar);
+
+  const abdmResponse = await requestExistingAbhaAadhaarOtp({
+    accessToken: abdmAccessToken,
+    encryptedAadhaar,
+    environment,
+  });
+
+  if (!abdmResponse.txnId) {
+    throw new ApiError(502, "ABDM did not return a transaction ID");
+  }
+
+  const transaction = await prisma.abhaTransaction.create({
+    data: {
+      txnId: abdmResponse.txnId,
+      patientId: patient.id,
+      facilityId,
+      purpose: "VERIFICATION",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
+      consentCode: HOSPITAL_LINK_CONSENT.code,
+      consentVersion: HOSPITAL_LINK_CONSENT.version,
+      consentAcceptedAt: new Date(),
+    },
+  });
+
+  return {
+    transactionId: transaction.id,
+    txnId: transaction.txnId,
+    message: abdmResponse.message,
+  };
+};
+
+
+export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
+
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
+
+  const abdmResponse = await verifyExistingAbhaAadhaarOtp({
+    accessToken: abdmAccessToken,
+    txnId: transaction.txnId,
+    encryptedOtp,
+    environment,
+  });
+
+  return finishLoginVerification(transaction, abdmResponse, abdmAccessToken, environment);
+};
+
 // ---------------------------------------------------------------------------
 // verification (link existing ABHA) - mobile number
 // ---------------------------------------------------------------------------
@@ -419,6 +446,9 @@ export const requestExistingAbhaMobileOtpService = async (patientId: string, fac
       purpose: "VERIFICATION",
       status: "PENDING",
       expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
+      consentCode: HOSPITAL_LINK_CONSENT.code,
+      consentVersion: HOSPITAL_LINK_CONSENT.version,
+      consentAcceptedAt: new Date(),
     },
   });
 
@@ -553,4 +583,203 @@ export const getAbhaProfileService = async (patientId: string, facilityId: strin
   }
 
   return profile;
+};
+
+// ---------------------------------------------------------------------------
+// ABHA card
+// ---------------------------------------------------------------------------
+
+export const getAbhaCardService = async (patientId: string, facilityId: string, abdmAccessToken: string, abhaXToken: string, environment: Environment) => {
+  await requireLinkedAbha(patientId, facilityId);
+
+  return getAbhaCard({ accessToken: abdmAccessToken, xToken: abhaXToken, environment }).catch(asAbhaSessionError);
+};
+
+// ---------------------------------------------------------------------------
+// enrolment follow-ups: verify the communication mobile, then choose an ABHA address.
+// They continue on ABDM's enrolment txnId, kept on the COMPLETED ENROLLMENT transaction.
+// ---------------------------------------------------------------------------
+
+const FOLLOW_UP_WINDOW_MS = 30 * 60 * 1000;
+
+const loadEnrolmentForFollowUp = async (transactionId: string, facilityId: string) => {
+  const transaction = await prisma.abhaTransaction.findUnique({ where: { id: transactionId } });
+
+  if (!transaction) {
+    throw new ApiError(404, "ABHA transaction not found", [], "TRANSACTION_NOT_FOUND");
+  }
+  if (transaction.facilityId !== facilityId) {
+    throw new ApiError(403, "Transaction does not belong to this facility");
+  }
+  if (transaction.purpose !== "ENROLLMENT" || transaction.status !== "COMPLETED" || !transaction.enrolTxnId) {
+    throw new ApiError(400, "This ABHA was not created in this session, so it cannot be changed here.", [], "ENROLMENT_SESSION_INVALID");
+  }
+  if (Date.now() - transaction.updatedAt.getTime() > FOLLOW_UP_WINDOW_MS) {
+    throw new ApiError(400, "The ABHA creation session has ended (30 minutes). The ABHA is created and linked; this step can no longer be done here.", [], "ENROLMENT_SESSION_EXPIRED");
+  }
+
+  return { ...transaction, enrolTxnId: transaction.enrolTxnId };
+};
+
+//step 1 - send an OTP to the mobile number to be linked with the new ABHA
+export const requestEnrolMobileVerificationService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, mobile: string) => {
+  const transaction = await loadEnrolmentForFollowUp(transactionId, facilityId);
+
+  const encryptedMobile = await encryptForAbdm(environment, abdmAccessToken, mobile);
+
+  const abdmResponse = await requestEnrolMobileOtp({
+    accessToken: abdmAccessToken,
+    txnId: transaction.enrolTxnId,
+    encryptedMobile,
+    environment,
+  });
+
+  if (!abdmResponse.txnId) {
+    throw new ApiError(502, "ABDM did not return a transaction ID");
+  }
+
+  await prisma.abhaTransaction.update({
+    where: { id: transaction.id },
+    data: { mobileOtpTxnId: abdmResponse.txnId },
+  });
+
+  return { transactionId: transaction.id, message: abdmResponse.message };
+};
+
+//step 2 - verify that OTP
+export const verifyEnrolMobileService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string) => {
+  const transaction = await loadEnrolmentForFollowUp(transactionId, facilityId);
+
+  if (!transaction.mobileOtpTxnId) {
+    throw new ApiError(400, "Request an OTP for the mobile number first.", [], "OTP_NOT_REQUESTED");
+  }
+
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
+
+  const abdmResponse = await verifyEnrolMobileOtp({
+    accessToken: abdmAccessToken,
+    txnId: transaction.mobileOtpTxnId,
+    encryptedOtp,
+    environment,
+  });
+
+  if (abdmResponse.authResult && abdmResponse.authResult !== "success") {
+    throw new ApiError(422, abdmResponse.message || "The OTP could not be verified. Check it and try again.", [], "OTP_INVALID");
+  }
+
+  await prisma.abhaTransaction.update({
+    where: { id: transaction.id },
+    data: {
+      mobileVerified: true,
+      mobileOtpTxnId: null,
+      // ABDM may hand back a fresh txnId to continue with (address creation)
+      enrolTxnId: abdmResponse.txnId ?? transaction.enrolTxnId,
+    },
+  });
+
+  return { transactionId: transaction.id, message: abdmResponse.message ?? "Mobile number verified" };
+};
+
+// ABHA address rules (ABDM): 4-18 characters, letters/digits, at most one "." and one "_", not at the ends.
+export const isValidAbhaAddressName = (value: string) =>
+  /^(?=.{4,18}$)[a-z0-9]+([._][a-z0-9]+)*$/i.test(value) && (value.match(/\./g)?.length ?? 0) <= 1 && (value.match(/_/g)?.length ?? 0) <= 1;
+
+export const getAbhaAddressSuggestionsService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment) => {
+  const transaction = await loadEnrolmentForFollowUp(transactionId, facilityId);
+
+  const abdmResponse = await getAbhaAddressSuggestions({
+    accessToken: abdmAccessToken,
+    txnId: transaction.enrolTxnId,
+    environment,
+  });
+
+  return { suggestions: Array.isArray(abdmResponse.abhaAddressList) ? abdmResponse.abhaAddressList : [] };
+};
+
+export const createAbhaAddressService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, abhaAddress: string) => {
+  const transaction = await loadEnrolmentForFollowUp(transactionId, facilityId);
+
+  // Suggestions come back as "name@domain"; ABDM wants just the name part.
+  const name = abhaAddress.split("@")[0] ?? "";
+  if (!isValidAbhaAddressName(name)) {
+    throw new ApiError(400, "ABHA address must be 4-18 characters: letters and numbers, with at most one dot and one underscore.", [], "ABHA_ADDRESS_INVALID");
+  }
+
+  const abdmResponse = await createAbhaAddress({
+    accessToken: abdmAccessToken,
+    txnId: transaction.enrolTxnId,
+    abhaAddress: name,
+    environment,
+  });
+
+  const preferred = abdmResponse.preferredAbhaAddress ?? `${name}@${getCmId(environment)}`;
+
+  await prisma.abhaPatient.update({
+    where: { patientId: transaction.patientId },
+    data: { abhaAddress: preferred },
+  });
+
+  return { abhaAddress: preferred };
+};
+
+// ---------------------------------------------------------------------------
+// verification (link existing ABHA) - ABHA number, OTP via Aadhaar or via the ABHA's mobile
+// ---------------------------------------------------------------------------
+
+// Accepts "91-1234-5678-9012" or 14 digits; ABDM wants the hyphenated form.
+export const formatAbhaNumber = (value: string) => {
+  const d = value.replace(/\D/g, "");
+  return `${d.slice(0, 2)}-${d.slice(2, 6)}-${d.slice(6, 10)}-${d.slice(10, 14)}`;
+};
+
+export const requestAbhaNumberOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, abhaNumber: string, channel: AbhaLoginChannel) => {
+  const patient = await findPatientInFacility(patientId, facilityId);
+
+  const encryptedAbhaNumber = await encryptForAbdm(environment, abdmAccessToken, formatAbhaNumber(abhaNumber));
+
+  const abdmResponse = await requestAbhaNumberOtp({
+    accessToken: abdmAccessToken,
+    encryptedAbhaNumber,
+    channel,
+    environment,
+  });
+
+  if (!abdmResponse.txnId) {
+    throw new ApiError(502, "ABDM did not return a transaction ID");
+  }
+
+  const transaction = await prisma.abhaTransaction.create({
+    data: {
+      txnId: abdmResponse.txnId,
+      patientId: patient.id,
+      facilityId,
+      purpose: "VERIFICATION",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
+      consentCode: HOSPITAL_LINK_CONSENT.code,
+      consentVersion: HOSPITAL_LINK_CONSENT.version,
+      consentAcceptedAt: new Date(),
+    },
+  });
+
+  return {
+    transactionId: transaction.id,
+    message: abdmResponse.message,
+  };
+};
+
+export const verifyAbhaNumberOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string, channel: AbhaLoginChannel) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
+
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
+
+  const abdmResponse = await verifyAbhaNumberOtp({
+    accessToken: abdmAccessToken,
+    txnId: transaction.txnId,
+    encryptedOtp,
+    channel,
+    environment,
+  });
+
+  return finishLoginVerification(transaction, abdmResponse, abdmAccessToken, environment);
 };

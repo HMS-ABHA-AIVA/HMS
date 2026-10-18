@@ -110,7 +110,7 @@ function classifyAbdmClientError(status: number, abdmCode: string | undefined, m
   if (/\b[xt]-?token\b/i.test(text)) {
     return new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");
   }
-  if (abdmCode === "ABDM-1115" || /does not match with any|no (abha|account)s? (found|exist)|not (registered|found).*abha|abha.*not found/i.test(text)) {
+  if (abdmCode === "ABDM-1115" || abdmCode === "ABDM-1114" || /user not found/i.test(text) || /does not match with any|no (abha|account)s? (found|exist)|not (registered|found).*abha|abha.*not found/i.test(text)) {
     return fail(404, "ABHA_NOT_FOUND", "No ABHA is registered with these details. Check the number with the patient, or create a new ABHA for them.");
   }
   if (/aadhaar number is incorrect|invalid aadhaar|aadhaar.*(not valid|incorrect)/i.test(text)) {
@@ -150,6 +150,9 @@ export const getCmId = (environment: AbdmEnvironment) =>
 
 // Consent artifact sent to ABDM on ABHA enrolment. Persisted on the AbhaTransaction as well.
 export const ABHA_ENROLLMENT_CONSENT = { code: "abha-enrollment", version: "1.4" } as const;
+
+// Hospital-side consent for linking an existing ABHA (the wording shown to the patient lives in the frontend).
+export const HOSPITAL_LINK_CONSENT = { code: "hospital-abha-link", version: "1.0" } as const;
 
 const getBaseUrl = (environment: AbdmEnvironment) => {
     if (environment === "SANDBOX") {
@@ -436,17 +439,24 @@ export const generateAbhaQr = async ({accessToken, xToken, environment}: {access
     }
   );
 
-  return normalizeQrResponse(Buffer.from(response.data), String(response.headers["content-type"] ?? ""));
+  return normalizeBinaryResponse(Buffer.from(response.data), String(response.headers["content-type"] ?? ""), "QR code");
 };
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+const PDF_MAGIC = Buffer.from("%PDF");
 
-// ABDM has returned QR codes as raw image bytes, and gateways sometimes wrap them as base64 text or JSON.
-// Always hand the browser real image bytes with a matching content type.
-function normalizeQrResponse(body: Buffer, contentType: string): { data: Buffer; contentType: string } {
+// ABDM has returned QR codes / ABHA cards as raw bytes, and gateways sometimes wrap them as base64 text or JSON.
+// Always hand the browser real PNG/JPEG/PDF bytes with a matching content type.
+function normalizeBinaryResponse(body: Buffer, contentType: string, what: string): { data: Buffer; contentType: string } {
   const imageType = (buf: Buffer) =>
-    buf.subarray(0, 4).equals(PNG_MAGIC) ? "image/png" : buf.subarray(0, 3).equals(JPEG_MAGIC) ? "image/jpeg" : undefined;
+    buf.subarray(0, 4).equals(PNG_MAGIC)
+      ? "image/png"
+      : buf.subarray(0, 3).equals(JPEG_MAGIC)
+        ? "image/jpeg"
+        : buf.subarray(0, 4).equals(PDF_MAGIC)
+          ? "application/pdf"
+          : undefined;
 
   const direct = imageType(body);
   if (direct) return { data: body, contentType: direct };
@@ -469,6 +479,145 @@ function normalizeQrResponse(body: Buffer, contentType: string): { data: Buffer;
     if (decodedType) return { data: decoded, contentType: decodedType };
   }
 
-  console.error("ABDM QR response was not an image", { contentType, bytes: body.length });
-  throw new ApiError(502, "ABDM returned the QR code in an unexpected format.", [], "QR_FORMAT");
+  console.error("ABDM response was not an image/PDF", { what, contentType, bytes: body.length });
+  throw new ApiError(502, `ABDM returned the ${what} in an unexpected format.`, [], "QR_FORMAT");
 }
+
+// ---------------------------------------------------------------------------
+// ABHA card
+// ---------------------------------------------------------------------------
+
+export const getAbhaCard = async ({accessToken, xToken, environment}: {accessToken: string, xToken: string, environment: AbdmEnvironment}) => {
+  const baseUrl = getBaseUrl(environment);
+
+  const response = await abdmHttp.get(
+    `${baseUrl}/v3/profile/account/abha-card`,
+    {
+      responseType: "arraybuffer",
+      headers: {
+        "REQUEST-ID": randomUUID(),
+        "TIMESTAMP": new Date().toISOString(),
+        "X-token": `Bearer ${xToken}`,
+        "Authorization": `Bearer ${accessToken}`,
+        // ABDM answers 406 to the "Accept: application/json" axios sends by default on this endpoint.
+        Accept: "*/*",
+      },
+    }
+  );
+
+  return normalizeBinaryResponse(Buffer.from(response.data), String(response.headers["content-type"] ?? ""), "ABHA card");
+};
+
+// ---------------------------------------------------------------------------
+// Enrolment follow-ups: verify the communication mobile (when it is not the Aadhaar-linked one),
+// then choose an ABHA address. Both continue on the txnId returned by enrol/byAadhaar.
+// ---------------------------------------------------------------------------
+
+export const requestEnrolMobileOtp = async ({accessToken, txnId, encryptedMobile, environment}: {
+  accessToken: string; txnId: string; encryptedMobile: string; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/enrollment/request/otp`,
+    {
+      txnId,
+      scope: ["abha-enrol", "mobile-verify"],
+      loginHint: "mobile",
+      loginId: encryptedMobile,
+      otpSystem: "abdm",
+    },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  return response.data as { txnId: string; message: string };
+};
+
+export const verifyEnrolMobileOtp = async ({accessToken, txnId, encryptedOtp, environment}: {
+  accessToken: string; txnId: string; encryptedOtp: string; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/enrollment/auth/byAbdm`,
+    {
+      scope: ["abha-enrol", "mobile-verify"],
+      authData: {
+        authMethods: ["otp"],
+        otp: { txnId, otpValue: encryptedOtp },
+      },
+    },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  return response.data as { txnId?: string; authResult?: string; message?: string };
+};
+
+export const getAbhaAddressSuggestions = async ({accessToken, txnId, environment}: {
+  accessToken: string; txnId: string; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.get(
+    `${getBaseUrl(environment)}/v3/enrollment/enrol/suggestion`,
+    { headers: { ...baseHeaders(accessToken), Transaction_Id: txnId } },
+  );
+
+  return response.data as { txnId?: string; abhaAddressList?: string[] };
+};
+
+export const createAbhaAddress = async ({accessToken, txnId, abhaAddress, environment}: {
+  accessToken: string; txnId: string; abhaAddress: string; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/enrollment/enrol/abha-address`,
+    { txnId, abhaAddress, preferred: 1 },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  return response.data as { txnId?: string; healthIdNumber?: string; preferredAbhaAddress?: string };
+};
+
+// ---------------------------------------------------------------------------
+// Login by ABHA number (OTP to the Aadhaar-linked mobile, or to the ABHA's own mobile)
+// ---------------------------------------------------------------------------
+
+export type AbhaLoginChannel = "aadhaar" | "mobile";
+
+const channelScope = (channel: AbhaLoginChannel) => ["abha-login", channel === "aadhaar" ? "aadhaar-verify" : "mobile-verify"];
+
+export const requestAbhaNumberOtp = async ({accessToken, encryptedAbhaNumber, channel, environment}: {
+  accessToken: string; encryptedAbhaNumber: string; channel: AbhaLoginChannel; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/profile/login/request/otp`,
+    {
+      scope: channelScope(channel),
+      loginHint: "abha-number",
+      loginId: encryptedAbhaNumber,
+      otpSystem: channel === "aadhaar" ? "aadhaar" : "abdm",
+    },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  return response.data as { txnId: string; message: string };
+};
+
+export const verifyAbhaNumberOtp = async ({accessToken, txnId, encryptedOtp, channel, environment}: {
+  accessToken: string; txnId: string; encryptedOtp: string; channel: AbhaLoginChannel; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/profile/login/verify`,
+    {
+      scope: channelScope(channel),
+      authData: {
+        authMethods: ["otp"],
+        otp: { txnId, otpValue: encryptedOtp },
+      },
+    },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  return response.data as {
+    txnId: string;
+    authResult: string;
+    message: string;
+    token?: string;
+    expiresIn?: number;
+    accounts?: { ABHANumber: string; [key: string]: unknown }[];
+  };
+};

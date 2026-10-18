@@ -2,6 +2,8 @@
 // The patient and ABHA steps use the backend; the OPD check-in uses demo data.
 import { useState } from 'react';
 import { withAbdmSession } from '@/api/abdmSession';
+import { ConsentBox } from '@/components/ConsentBox';
+import { ABHA_CREATE_CONSENT, HOSPITAL_LINK_CONSENT } from '@/lib/consentText';
 import { confirmAbhaLink, createPatient, requestAbhaCreateOtp, requestAbhaLinkOtp, verifyAbhaCreateOtp } from '@/api/endpoints';
 import { Modal } from '@/components/ui/Modal';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -39,6 +41,7 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
 
   const [abhaMethod, setAbhaMethod] = useState<AbhaMethod | null>(null);
   const [aadhaar, setAadhaar] = useState('');
+  const [consentGiven, setConsentGiven] = useState(false);
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
   const [mobile, setMobile] = useState(patient?.phone ?? '');
@@ -54,7 +57,7 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
   const demographicsValid =
     name.trim().length >= 2 && Number(age) > 0 && /^\d{10}$/.test(phone) && (!email || /^\S+@\S+\.\S+$/.test(email));
   const otpFlow = abhaMethod === 'create' || abhaMethod === 'link';
-  const canSendOtp = /^\d{12}$/.test(aadhaar);
+  const canSendOtp = /^\d{12}$/.test(aadhaar) && consentGiven;
   const canVerify = /^\d{6}$/.test(otp) && (abhaMethod === 'link' || /^\d{10}$/.test(mobile));
 
   async function handleDemographicsNext() {
@@ -85,6 +88,7 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
 
   function chooseMethod(method: AbhaMethod) {
     setAbhaMethod(method);
+    setConsentGiven(false);
     setTransactionId(null);
     setOtp('');
     setAadhaar('');
@@ -98,12 +102,12 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
     try {
       if (abhaMethod === 'create') {
         const { data } = await withAbdmSession(environment, () =>
-          requestAbhaCreateOtp({ patientId: newPatient.id, aadhaar, environment })
+          requestAbhaCreateOtp({ patientId: newPatient.id, aadhaar, environment, consent: true })
         );
         setTransactionId(data.transactionId);
       } else {
         const { data } = await withAbdmSession(environment, () =>
-          requestAbhaLinkOtp({ patientId: newPatient.id, aadhaar, environment })
+          requestAbhaLinkOtp({ patientId: newPatient.id, aadhaar, environment, consent: true })
         );
         setTransactionId(data.transactionId);
       }
@@ -228,6 +232,12 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
             <div className="field" style={{ marginTop: 12 }}>
               <label>Aadhaar number</label>
               <input value={aadhaar} onChange={(e) => setAadhaar(e.target.value)} placeholder="12-digit Aadhaar" inputMode="numeric" maxLength={12} autoComplete="off" />
+              <ConsentBox
+                consent={abhaMethod === 'create' ? ABHA_CREATE_CONSENT : HOSPITAL_LINK_CONSENT}
+                checked={consentGiven}
+                onChange={setConsentGiven}
+                disabled={abhaBusy}
+              />
             </div>
           )}
 

@@ -8,6 +8,7 @@ import {
   listPatientTransactions,
   getAbhaProfile,
   getAbhaQrCodeBlob,
+  getAbhaCardBlob,
   type BackendPatientWithAbha,
   type AbhaTransaction,
   type FullAbhaProfile,
@@ -61,6 +62,8 @@ export function PatientRecord() {
   const [qrUrl, setQrUrl] = useState<string>("");
   const [liveNote, setLiveNote] = useState<string>("");
   const [qrNote, setQrNote] = useState<string>("");
+  const [cardBusy, setCardBusy] = useState(false);
+  const [cardError, setCardError] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   // In-browser only (as documented until backend can store these)
@@ -136,6 +139,29 @@ export function PatientRecord() {
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
   }, [patientId, environment]);
+
+  // Downloads the official ABHA card from ABDM (needs the ABHA to be verified in this session, like the QR).
+  async function handleDownloadCard() {
+    if (!patientId) return;
+    setCardError("");
+    setCardBusy(true);
+    try {
+      const blob = await withAbdmSession(environment, () => getAbhaCardBlob(patientId, environment));
+      const ext = blob.type.includes("pdf") ? "pdf" : blob.type.includes("jpeg") ? "jpg" : "png";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${patient?.name || "Patient"}_ABHA_card.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setCardError(`ABHA card unavailable: ${err instanceof ApiError ? err.message : "Could not reach the server."}`);
+    } finally {
+      setCardBusy(false);
+    }
+  }
 
   function handlePrint() {
     window.print();
@@ -264,7 +290,12 @@ export function PatientRecord() {
                       {qrNote}
                     </p>
                   )}
-                  {(liveNote || qrNote) && (
+                  {cardError && (
+                    <p className="abha-note" style={{ color: "var(--error)" }}>
+                      {cardError}
+                    </p>
+                  )}
+                  {(liveNote || qrNote || cardError) && (
                     <p className="abha-note">
                       <a style={{ cursor: "pointer" }} onClick={() => navigate(`/register?patientId=${patientId}&refresh=1`)}>
                         Verify this ABHA again
@@ -279,6 +310,9 @@ export function PatientRecord() {
                     </button>
                     <button className="btn btn-ghost" onClick={handleSaveQr} disabled={!qrUrl}>
                       Save QR image
+                    </button>
+                    <button className="btn btn-ghost" onClick={handleDownloadCard} disabled={cardBusy}>
+                      {cardBusy ? "Downloading..." : "Download ABHA card"}
                     </button>
                   </div>
                 </>

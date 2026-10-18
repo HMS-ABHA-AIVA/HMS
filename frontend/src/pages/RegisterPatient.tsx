@@ -12,8 +12,14 @@ import {
   requestAbhaMobileOtp,
   confirmAbhaMobileOtp,
   verifyAbhaMobileUser,
+  requestAbhaNumberOtp,
+  confirmAbhaNumberOtp,
   type AbhaAccountItem,
+  type AbhaLoginChannel,
 } from "@/api/endpoints";
+import { CreateFollowUps } from "@/components/CreateFollowUps";
+import { ConsentBox } from "@/components/ConsentBox";
+import { ABHA_CREATE_CONSENT, HOSPITAL_LINK_CONSENT } from "@/lib/consentText";
 import { withAbdmSession } from "@/api/abdmSession";
 import { StopState } from "@/pages/ErrorStates";
 import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
@@ -21,8 +27,9 @@ import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
 // ABDM allows a new OTP for the same number only after about 30 seconds.
 const OTP_RESEND_SECONDS = 30;
 
-type Step = 1 | 2 | 3 | 4 | 5;
-type AbhaMode = "create_aadhaar" | "link_aadhaar" | "link_mobile";
+// 6 = optional follow-ups after creating an ABHA (verify mobile, choose ABHA address)
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
+type AbhaMode = "create_aadhaar" | "link_aadhaar" | "link_mobile" | "link_number";
 
 export function RegisterPatient() {
   const navigate = useNavigate();
@@ -48,11 +55,21 @@ export function RegisterPatient() {
   // Step 3: Identity & Consent
   const [aadhaar, setAadhaar] = useState("");
   const [linkMobileNumber, setLinkMobileNumber] = useState("");
+  const [abhaNumber, setAbhaNumber] = useState("");
+  const [channel, setChannel] = useState<AbhaLoginChannel>("aadhaar");
   const [consent, setConsent] = useState(false);
 
   // Step 4: OTP verification
   const [transactionId, setTransactionId] = useState("");
   const [otp, setOtp] = useState("");
+  // ABDM's own wording after an OTP is sent, e.g. "...mobile number ending with ******6375" (already masked)
+  const [otpMessage, setOtpMessage] = useState("");
+  // set after "create ABHA" succeeds; drives the optional follow-up step
+  const [created, setCreated] = useState<{
+    transactionId: string;
+    mobileVerified: boolean;
+    abhaAddress: string | null;
+  } | null>(null);
   const [mobileAccounts, setMobileAccounts] = useState<AbhaAccountItem[]>([]);
   const [selectedAbhaNumber, setSelectedAbhaNumber] = useState("");
 
@@ -154,6 +171,15 @@ export function RegisterPatient() {
       }
     }
 
+    if (mode === "link_number" && abhaNumber.replace(/\D/g, "").length !== 14) {
+      setErrorState({
+        tone: "error",
+        title: "Invalid ABHA number",
+        body: "ABHA number must be 14 digits, for example 91-1234-5678-9012.",
+      });
+      return;
+    }
+
     // The mobile number is what ABHA is linked to (create) or searched by (link by mobile).
     if (mode === "create_aadhaar" || mode === "link_mobile") {
       if (linkMobileNumber.replace(/\D/g, "").length !== 10) {
@@ -185,11 +211,14 @@ export function RegisterPatient() {
       const cleanMobile = linkMobileNumber.replace(/\D/g, "");
       const res =
         mode === "create_aadhaar"
-          ? await requestAbhaCreateOtp({ patientId, aadhaar: cleanAadhaar, environment })
+          ? await requestAbhaCreateOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true })
           : mode === "link_aadhaar"
-            ? await requestAbhaLinkOtp({ patientId, aadhaar: cleanAadhaar, environment })
-            : await requestAbhaMobileOtp({ patientId, mobile: cleanMobile, environment });
+            ? await requestAbhaLinkOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true })
+            : mode === "link_number"
+              ? await requestAbhaNumberOtp({ patientId, abhaNumber: abhaNumber.replace(/\D/g, ""), channel, environment, consent: true })
+              : await requestAbhaMobileOtp({ patientId, mobile: cleanMobile, environment, consent: true });
       setTransactionId(res.data.transactionId);
+      setOtpMessage(res.message ?? "");
     });
     setResendIn(OTP_RESEND_SECONDS);
   }
@@ -254,17 +283,34 @@ export function RegisterPatient() {
       await withAbdmSession(environment, async () => {
         if (mode === "create_aadhaar") {
           const mobileForEnrol = linkMobileNumber.replace(/\D/g, "");
-          await verifyAbhaCreateOtp({
+          const res = await verifyAbhaCreateOtp({
             transactionId,
             otp: cleanOtp,
             mobile: mobileForEnrol,
             environment,
           });
-          setStep(5);
+          if (res.data.hasFollowUp) {
+            setCreated({
+              transactionId: res.data.transactionId,
+              mobileVerified: res.data.mobileVerified,
+              abhaAddress: res.data.abhaAddress,
+            });
+            setStep(6);
+          } else {
+            setStep(5);
+          }
         } else if (mode === "link_aadhaar") {
           await confirmAbhaLink({
             transactionId,
             otp: cleanOtp,
+            environment,
+          });
+          setStep(5);
+        } else if (mode === "link_number") {
+          await confirmAbhaNumberOtp({
+            transactionId,
+            otp: cleanOtp,
+            channel,
             environment,
           });
           setStep(5);
@@ -333,11 +379,11 @@ export function RegisterPatient() {
               {step === 1 && <div className="state">In progress</div>}
             </div>
           </li>
-          <li className={step === 2 || step === 3 || step === 4 ? "current" : step > 4 ? "done" : ""}>
+          <li className={step === 2 || step === 3 || step === 4 || step === 6 ? "current" : step === 5 ? "done" : ""}>
             <span className="num">2</span>
             <div className="step-text">
               <span className="lbl">ABHA</span>
-              {(step === 2 || step === 3 || step === 4) && <div className="state">In progress</div>}
+              {(step === 2 || step === 3 || step === 4 || step === 6) && <div className="state">In progress</div>}
             </div>
           </li>
           <li className={step === 5 ? "current" : ""}>
@@ -491,6 +537,20 @@ export function RegisterPatient() {
                 Link using the mobile number registered with ABHA.
               </div>
             </button>
+            <button
+              className="btn btn-ghost"
+              style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 10 }}
+              onClick={() => {
+                setMode("link_number");
+                setErrorState(null);
+                setStep(3);
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>Link by ABHA number</div>
+              <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                Link using the 14-digit ABHA number, with an OTP to the Aadhaar-linked or ABHA mobile.
+              </div>
+            </button>
             {refresh ? (
               <button className="btn-link" type="button" onClick={() => navigate(`/record/${patientId}`)}>
                 Back to patient record
@@ -506,19 +566,54 @@ export function RegisterPatient() {
         {step === 3 && (
           <div className="card-form">
             <h2>
-              {mode === "link_mobile" ? "Mobile number" : mode === "create_aadhaar" ? "Aadhaar and mobile number" : "Aadhaar number"}
+              {mode === "link_mobile"
+                ? "Mobile number"
+                : mode === "link_number"
+                  ? "ABHA number"
+                  : mode === "create_aadhaar"
+                    ? "Aadhaar and mobile number"
+                    : "Aadhaar number"}
             </h2>
             <p className="lead">
               {mode === "link_mobile"
                 ? "An OTP will be sent to this mobile number registered with ABHA."
-                : "An OTP will be sent to the mobile linked with this Aadhaar."}
+                : mode === "link_number"
+                  ? "An OTP will be sent to the mobile you choose below."
+                  : "An OTP will be sent to the mobile linked with this Aadhaar."}
             </p>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
                 <StopState {...errorState} />
               </div>
             )}
-            {mode !== "link_mobile" && (
+            {mode === "link_number" && (
+              <>
+                <div className="field">
+                  <label>ABHA number</label>
+                  <input
+                    className="input mono"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="91-1234-5678-9012"
+                    value={abhaNumber}
+                    onChange={(e) => setAbhaNumber(e.target.value.replace(/[^\d-]/g, "").slice(0, 17))}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="field">
+                  <label>Send the OTP to</label>
+                  <div className="seg">
+                    <button type="button" className={channel === "aadhaar" ? "on" : ""} onClick={() => setChannel("aadhaar")} disabled={loading}>
+                      Aadhaar-linked mobile
+                    </button>
+                    <button type="button" className={channel === "mobile" ? "on" : ""} onClick={() => setChannel("mobile")} disabled={loading}>
+                      ABHA mobile
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+            {(mode === "create_aadhaar" || mode === "link_aadhaar") && (
               <div className="field">
                 <label>Aadhaar number</label>
                 <input
@@ -535,7 +630,7 @@ export function RegisterPatient() {
                 <div className="hint">Hidden as you type. It is sent to ABDM encrypted and is not stored here.</div>
               </div>
             )}
-            {mode !== "link_aadhaar" && (
+            {(mode === "create_aadhaar" || mode === "link_mobile") && (
               <div className="field">
                 <label>{mode === "create_aadhaar" ? "Mobile number to link with the new ABHA" : "Mobile number"}</label>
                 <div className="mobile-wrap">
@@ -551,15 +646,12 @@ export function RegisterPatient() {
                 </div>
               </div>
             )}
-            <label style={{ display: "flex", gap: 8, fontSize: 12.5, color: "var(--text-dim)", marginTop: 10 }}>
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                disabled={loading}
-              />
-              The patient consents to using their {mode === "link_mobile" ? "mobile number" : "Aadhaar"} to create or link an ABHA.
-            </label>
+            <ConsentBox
+              consent={mode === "create_aadhaar" ? ABHA_CREATE_CONSENT : HOSPITAL_LINK_CONSENT}
+              checked={consent}
+              onChange={setConsent}
+              disabled={loading}
+            />
             <div className="form-actions">
               <button className="btn-link" type="button" onClick={() => { setErrorState(null); setStep(2); }} disabled={loading}>
                 Back
@@ -574,7 +666,9 @@ export function RegisterPatient() {
         {step === 4 && (
           <div className="card-form" style={{ borderStyle: "dashed" }}>
             <h2>Enter the OTP</h2>
-            <p className="lead">The patient will have received a 6-digit code. Valid for 10 minutes.</p>
+            <p className="lead">
+              {otpMessage || "The patient will have received a 6-digit code."} Valid for 10 minutes.
+            </p>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
                 <StopState {...errorState} />
@@ -655,6 +749,17 @@ export function RegisterPatient() {
               </button>
             </div>
           </div>
+        )}
+
+        {step === 6 && created && (
+          <CreateFollowUps
+            transactionId={created.transactionId}
+            mobile={linkMobileNumber.replace(/\D/g, "")}
+            mobileVerified={created.mobileVerified}
+            abhaAddress={created.abhaAddress}
+            environment={environment}
+            onDone={() => setStep(5)}
+          />
         )}
 
         {step === 5 && (

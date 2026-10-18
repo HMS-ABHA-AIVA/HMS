@@ -144,10 +144,16 @@ model AbhaTransaction {
 
   expiresAt DateTime
 
-  // Consent artifact sent to ABDM (set when enrolment completes)
+  // Consent shown to and accepted by the patient (set when the OTP is requested; for enrolment it is
+  // also the artifact sent to ABDM)
   consentCode       String?
   consentVersion    String?
   consentAcceptedAt DateTime?
+
+  // Enrolment follow-ups (mobile verification, ABHA address) continue on ABDM's enrolment txnId
+  enrolTxnId        String?
+  mobileOtpTxnId    String?
+  mobileVerified    Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -169,4 +175,29 @@ enum AbhaTransactionStatus {
   COMPLETED
   FAILED
   EXPIRED
+}
+
+// Who did what in the ABHA module (NHA asks for a complete audit trail). Metadata only:
+// never Aadhaar/mobile numbers, OTPs, tokens or profile data.
+model AbhaAuditLog {
+  id String @id @default(uuid())
+
+  facilityId String
+  userId     String?
+  patientId  String?
+  // our AbhaTransaction.id when the request carried one
+  transactionId String?
+
+  action     String
+  outcome    String
+  httpStatus Int
+  errorCode  String?
+
+  ip        String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([facilityId, createdAt])
+  @@index([patientId])
 }
