@@ -11,6 +11,7 @@ import facilityRouter from "./modules/facility/facility.routes.js";
 import patientRouter from "./modules/patients/patient.routes.js";
 import abdmRouter from "./integration/Abha/m1/m1.routes.js";
 import adminRouter from "./modules/users/admin/admin.routes.js";
+import { bridgeRouter, shareStaffRouter } from "./integration/Abha/share/share.routes.js";
 
 dotenv.config();
 
@@ -49,6 +50,10 @@ app.use("/api/user/admin",adminRouter);
 
 //patients
 app.use("/api/patient",patientRouter)
+
+//scan & share: staff queue, and the callback ABDM makes on the bridge URL
+app.use("/api/abha/shares", shareStaffRouter);
+app.use("/api/v3/hip", bridgeRouter);
 
 //abha-module
 app.use("/api/abha",abdmRouter)

@@ -40,6 +40,9 @@ const CODE_TITLES: Record<string, { tone: MappedErrorState["tone"]; title: strin
   QR_FORMAT: { tone: "error", title: "QR code could not be read" },
   VALIDATION: { tone: "error", title: "Check the details entered" },
   ABHA_SESSION_EXPIRED: { tone: "pending", title: "ABHA verification has ended" },
+  SHARE_NOT_FOUND: { tone: "pending", title: "Shared profile no longer available" },
+  PHONE_REQUIRED: { tone: "error", title: "Mobile number needed" },
+  PHONE_IN_USE: { tone: "error", title: "Mobile number already in use" },
 };
 
 /**

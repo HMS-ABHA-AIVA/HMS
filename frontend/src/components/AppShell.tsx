@@ -5,6 +5,7 @@ type Item = { key: string; label: string; demo?: boolean; group?: string };
 const STAFF_NAV: Item[] = [
   { key: "dashboard", label: "Dashboard", group: "Front desk" },
   { key: "registration", label: "Registration" },
+  { key: "shared", label: "Shared profiles" },
   { key: "opd", label: "OPD queue", demo: true, group: "Clinical" },
   { key: "beds", label: "Beds", demo: true },
   { key: "pharmacy", label: "Pharmacy", demo: true, group: "Back office" },

@@ -6,6 +6,7 @@ import { PatientList } from "@/pages/PatientList";
 import { RegisterPatient } from "@/pages/RegisterPatient";
 import { PatientRecord } from "@/pages/PatientRecord";
 import { OpdQueue } from "@/pages/OpdQueue";
+import { SharedProfiles } from "@/pages/SharedProfiles";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/" element={<PatientList />} />
           <Route path="/registration" element={<PatientList />} />
           <Route path="/register" element={<RegisterPatient />} />
+          <Route path="/shared-profiles" element={<SharedProfiles />} />
           <Route path="/record/:patientId" element={<PatientRecord />} />
           <Route path="/emr/:patientId" element={<PatientRecord />} />
 

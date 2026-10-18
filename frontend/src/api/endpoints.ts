@@ -241,6 +241,39 @@ export const getAbhaQrCodeBlob = (patientId: string, environment: AbdmEnvironmen
 export const getAbhaCardBlob = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
   getBlob(`/abha/profile/card?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);
 
+// ---- Scan & Share: profiles patients shared by scanning a counter QR code ---------------------------------------
+
+export interface SharedProfile {
+  id: string;
+  counterCode: string;
+  tokenNumber: number;
+  name: string;
+  gender: string | null;
+  dayOfBirth: number | null;
+  monthOfBirth: number | null;
+  yearOfBirth: number;
+  abhaNumber: string | null;
+  abhaAddress: string;
+  phone: string | null;
+  address: string | null;
+  receivedAt: string;
+  /** The token (and so this entry) stops being valid at this time. */
+  expiresAt: string;
+  /** Set when this ABHA is already linked to a patient here. */
+  matchedPatient: { id: string; name: string } | null;
+}
+
+export const listSharedProfiles = () => get<Envelope<SharedProfile[]>>('/abha/shares');
+
+export const getShareConfig = (environment: AbdmEnvironment) =>
+  get<Envelope<{ hipId: string; qrBaseUrl: string; validityMinutes: number }>>(`/abha/shares/config?environment=${environment}`);
+
+/** `phone` is only needed when the shared profile has no usable mobile number or another patient already uses it. */
+export const registerSharedProfile = (shareId: string, body: { phone?: string } = {}) =>
+  post<Envelope<{ patientId: string; created: boolean; abhaLinked: boolean }>>(`/abha/shares/${shareId}/register`, body);
+
+export const dismissSharedProfile = (shareId: string) => post<Envelope<never>>(`/abha/shares/${shareId}/dismiss`);
+
 // ---- Update the mobile number / email held on the ABHA (OTP goes to the new value) --------------------------------
 
 export const requestAbhaContactUpdate = (

@@ -55,6 +55,7 @@ model Facility {
   abdmData       FacilityAbdmData[]
   refreshTokens FacilityRefreshToken[]
   abhaTransactions AbhaTransaction[]
+  patientShares    PatientShare[]
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -210,4 +211,55 @@ model AbhaAuditLog {
 
   @@index([facilityId, createdAt])
   @@index([patientId])
+}
+
+// A profile a person shared by scanning a counter QR code (Scan & Share). It waits here, for at most the token's
+// 30-minute validity, until staff register the patient or dismiss it; then it is deleted. These rows are personal
+// data, so expired ones are purged (see share.service.ts) and nothing from them is written to logs.
+model PatientShare {
+  id String @id @default(uuid())
+
+  facilityId  String
+  environment AbdmEnvironment
+
+  // Counter from the QR code, and the token handed back to the patient for that counter's queue
+  counterCode String
+  tokenNumber Int
+
+  // REQUEST-ID of the inbound share: ABDM retries carry the same one and are ignored
+  requestId String @unique
+
+  abhaNumber  String?
+  abhaAddress String
+  name        String
+  gender      String?
+  dayOfBirth   Int?
+  monthOfBirth Int?
+  yearOfBirth  Int
+  addressLine String?
+  district    String?
+  state       String?
+  pincode     String?
+  phone       String?
+
+  // Set when this ABHA is already linked to a patient of the facility
+  matchedPatientId String?
+
+  receivedAt DateTime @default(now())
+  expiresAt  DateTime
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+
+  @@index([facilityId, expiresAt])
+  @@index([facilityId, counterCode, abhaAddress])
+}
+
+// Last token handed out per counter per day, so numbers stay sequential and are never reused when shares are deleted
+model ShareTokenCounter {
+  facilityId  String
+  counterCode String
+  tokenDate   DateTime @db.Date
+  lastToken   Int
+
+  @@id([facilityId, counterCode, tokenDate])
 }

@@ -69,3 +69,30 @@ ABDM gateway tokens last 20 minutes; when a route answers `401 ABDM authenticati
 
 Every OTP-request route also needs `consent: true` (the patient accepted the consent text). `patientId` and `transactionId` must be UUIDs. ABDM/UIDAI validation messages (wrong Aadhaar, wrong OTP, 30-second
 OTP cool-down) are returned as-is with status 400/422/429.
+
+### Scan & Share (patient shares their ABHA profile at a counter)
+
+A patient scans the counter QR code (`<phr host>/share-profile?hip-id=<facility HFR id>&counter-id=<counter>`) in their PHR app and agrees to share.
+ABDM then calls our bridge; we answer 200, store the profile for up to 30 minutes, and reply on `patient-share/v3/on-share` with a queue token
+(sequential per counter per day; the same person scanning again while their token is valid gets the same token). Staff register the patient from the
+"Shared profiles" screen: no OTP is needed because the patient consented in their own app. Expired, unclaimed shares are deleted.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v3/hip/patient/share` | ABDM bearer JWT (RS256, verified against the gateway keys), `X-HIP-ID` = facility HFR id | The callback ABDM makes on the bridge URL. Rejected with 401/403 and logged (`ABDM_CALLBACK_REJECTED`) unless all checks pass. |
+| `GET` | `/api/abha/shares` | Staff | Shared profiles still waiting (valid token), oldest first. Includes the existing patient when the ABHA is already linked. |
+| `GET` | `/api/abha/shares/config?environment=` | Staff | HFR id and QR host for printing counter QR codes. |
+| `POST` | `/api/abha/shares/:shareId/register` | Staff | body `{ phone? }`. Create the patient and link the ABHA (or return the existing patient). `PHONE_REQUIRED` / `PHONE_IN_USE` ask for a mobile number. |
+| `POST` | `/api/abha/shares/:shareId/dismiss` | Staff | Delete a shared profile without registering it. |
+
+Setup (once per environment, and again whenever the public URL changes): the backend must be reachable on public HTTPS (a deployed URL, or a tunnel for
+sandbox testing), then run
+
+```
+npx tsx scripts/register_bridge.ts <facility HFR id> SANDBOX https://<public backend url>
+```
+
+`PATCH /gateway/v3/bridge/url` replaces the callback URL for the **whole client id**, so use a client id that no other system shares. Optional env vars:
+`SANDBOX_GATEWAY_URL` / `PROD_GATEWAY_URL` (default `https://dev.abdm.gov.in/api/hiecm` / `https://live.abdm.gov.in/api/hiecm`),
+`SHARE_QR_SANDBOX_URL` / `SHARE_QR_PRODUCTION_URL` (QR host; the production host is to be confirmed with NHA at onboarding), and, for local development only,
+`ABDM_SKIP_CALLBACK_JWT=true` (accepts any bearer token; ignored when `NODE_ENV=production`).

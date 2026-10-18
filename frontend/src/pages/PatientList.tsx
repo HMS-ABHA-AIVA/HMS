@@ -141,6 +141,7 @@ export function PatientList() {
   function handleNavigate(key: string) {
     if (key === "dashboard") navigate("/");
     else if (key === "registration") navigate("/registration");
+    else if (key === "shared") navigate("/shared-profiles");
     else if (key === "opd") navigate("/opd");
   }
 

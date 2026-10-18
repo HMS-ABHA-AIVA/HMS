@@ -141,7 +141,7 @@ const last10 = (value: string) => digitsOnly(value).slice(-10);
 const mobileMatchesRecord = (recordPhone: string, abhaMobile: unknown): boolean | undefined =>
   typeof abhaMobile === "string" && digitsOnly(abhaMobile).length >= 10 ? last10(abhaMobile) === last10(recordPhone) : undefined;
 
-const normalizeGender = (value: unknown): "M" | "F" | "O" | undefined => {
+export const normalizeGender = (value: unknown): "M" | "F" | "O" | undefined => {
   if (typeof value !== "string") return undefined;
   const v = value.trim().toLowerCase();
   if (v === "m" || v === "male") return "M";
@@ -150,7 +150,7 @@ const normalizeGender = (value: unknown): "M" | "F" | "O" | undefined => {
   return undefined;
 };
 
-const cleanText = (value: unknown, max = 300): string | undefined =>
+export const cleanText = (value: unknown, max = 300): string | undefined =>
   typeof value === "string" && value.trim() ? value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : undefined;
 
 // After a successful link, copy gender / address / state / district (and the date of birth when the record
