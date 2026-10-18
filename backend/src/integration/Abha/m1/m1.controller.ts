@@ -259,7 +259,7 @@ export const verifyExistingAbhaAadhaarOtpController = async (req: userAuthReques
     res.cookie("abhaXToken", resultData.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     });
 
 
@@ -370,7 +370,7 @@ export const verifyExistingAbhaMobileOtpController = async (req: userAuthRequest
     res.cookie("t_token", resultData.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: resultData.expiresIn * 1000,
     });
 
@@ -439,7 +439,7 @@ export const verifyExistingAbhaMobileUserController = async (req: userAuthReques
     res.cookie("abhaXToken", resultData.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: resultData.expiresIn * 1000,
     });
     // T-token is only needed for Step 3
@@ -491,10 +491,17 @@ export const generateAbhaQrController = async (req: userAuthRequest, res: Respon
 
     const { facilityId } = req.user;
 
+    const qrQuery = getAbhaProfileSchema.safeParse(req.query);
+
+    if (!qrQuery.success) {
+      throw new ApiError(400, `Invalid query parameters: ${qrQuery.error.issues.map((issue: any) => issue.message).join(", ")}`);
+    }
+
     const resultData = await generateAbhaQrService(
       facilityId,
       abdmAccessToken,
-      abhaXToken
+      abhaXToken,
+      qrQuery.data.environment
     );
 
     res.setHeader(
@@ -525,7 +532,7 @@ export const getAbhaProfileController = async (req: userAuthRequest, res: Respon
 
     }
 
-    const result = getAbhaProfileSchema.safeParse(req.body);
+    const result = getAbhaProfileSchema.safeParse(req.query);
 
     if (!result.success) {
 
@@ -533,7 +540,7 @@ export const getAbhaProfileController = async (req: userAuthRequest, res: Respon
         .map((issue: any) => issue.message)
         .join(", ");
 
-      throw new ApiError(400, `Invalid request body: ${message}`);
+      throw new ApiError(400, `Invalid query parameters: ${message}`);
 
     }
 

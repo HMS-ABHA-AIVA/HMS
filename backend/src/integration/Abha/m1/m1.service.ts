@@ -3,7 +3,7 @@ import { ApiError } from "../../../common/errors/appError.js";
 import { generateAbdmSessionToken } from "../../../common/client/facility.client.js";
 import { decrypt } from "../../../common/utils/encryption.js"
 import { encryptWithAbdmPublicKey } from "../../../common/utils/encryption.js";
-import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile,requestExistingAbhaMobileOtp,verifyExistingAbhaMobileOtp,verifyExistingAbhaMobileUser ,generateAbhaQr} from "../../../common/client/abdm.client.js";
+import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile,requestExistingAbhaMobileOtp,verifyExistingAbhaMobileOtp,verifyExistingAbhaMobileUser ,generateAbhaQr, ABHA_ENROLLMENT_CONSENT} from "../../../common/client/abdm.client.js";
 
 export const abdmTokenRetrievalService = async (facilityId: string, userId: string, environment: "SANDBOX" | "PRODUCTION") => {
   const user = await prisma.user.findUnique({
@@ -226,13 +226,16 @@ export const aadhaarOtpVerifyService = async (transactionId: string, facilityId:
     },
   });
 
-  // 11. Mark transaction as completed
+  // 11. Mark transaction as completed and persist the consent that was sent to ABDM
   await prisma.abhaTransaction.update({
     where: {
       id: transaction.id,
     },
     data: {
       status: "COMPLETED",
+      consentCode: ABHA_ENROLLMENT_CONSENT.code,
+      consentVersion: ABHA_ENROLLMENT_CONSENT.version,
+      consentAcceptedAt: new Date(),
     },
   });
 
@@ -419,7 +422,6 @@ export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string,
       "ABDM authentication succeeded but no X-token was returned"
     );
   }
-  console.log("\n \n ABDM Response: \n \n", abdmResponse);
   // Get ABHA profile
   const profile = await getExistingAbhaProfile({
     accessToken: abdmAccessToken,
@@ -433,7 +435,6 @@ export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string,
       "ABDM profile did not contain an ABHA number"
     );
   }
-  console.log("\n \n ABHA Profile: \n \n", profile);
   // Link ABHA to the patient
   const abhaPatient = await prisma.abhaPatient.create({
     data: {
@@ -671,13 +672,7 @@ export const verifyExistingAbhaMobileUserService = async (abhaNumber: string,tra
     );
   }
 
-  // Encrypt ABHA number for ABDM
-  const encryptedAbhaNumber = encryptWithAbdmPublicKey(
-    abhaNumber,
-    publicKey
-  );
-
-  // Step 3: Verify user
+  // Step 3: Verify user (ABHA number is sent as returned in the account list; no encryption needed)
   const abdmResponse = await verifyExistingAbhaMobileUser(
   environment,
   abdmAccessToken,
@@ -772,9 +767,9 @@ export const verifyExistingAbhaMobileUserService = async (abhaNumber: string,tra
 
 
 //generate QR code
-export const generateAbhaQrService = async (facilityId: string,abdmAccessToken: string,abhaXToken: string) => {
+export const generateAbhaQrService = async (facilityId: string,abdmAccessToken: string,abhaXToken: string,environment: "SANDBOX" | "PRODUCTION") => {
 
-  const result = await generateAbhaQr({accessToken: abdmAccessToken,xToken: abhaXToken});
+  const result = await generateAbhaQr({accessToken: abdmAccessToken,xToken: abhaXToken,environment});
 
   return result;
 };

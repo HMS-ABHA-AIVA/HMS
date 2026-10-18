@@ -112,7 +112,7 @@ export function PatientRecord() {
           }
 
           try {
-            const blob = await getAbhaQrCodeBlob();
+            const blob = await getAbhaQrCodeBlob(environment);
             if (active && blob) {
               createdUrl = URL.createObjectURL(blob);
               setQrUrl(createdUrl);

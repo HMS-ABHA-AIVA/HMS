@@ -150,5 +150,6 @@ export const getAbhaProfile = (environment: AbdmEnvironment = 'SANDBOX') =>
   get<Envelope<FullAbhaProfile>>(`/abha/profile?environment=${environment}`);
 
 import { getBlob } from '@/api/client';
-export const getAbhaQrCodeBlob = () => getBlob('/abha/profile/qr');
+export const getAbhaQrCodeBlob = (environment: AbdmEnvironment = 'SANDBOX') =>
+  getBlob(`/abha/profile/qr?environment=${environment}`);
 

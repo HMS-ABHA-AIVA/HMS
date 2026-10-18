@@ -1,4 +1,5 @@
 import axios from "axios";
+import { randomUUID } from "crypto";
 import { ApiError } from "../errors/appError.js";
 
 type AbdmEnvironment = "SANDBOX" | "PRODUCTION";
@@ -18,7 +19,7 @@ export const generateAbdmSessionToken = async ({
 
   const cmId = environment === "SANDBOX" ? "sbx" : "abdm";
 
-  const requestId = crypto.randomUUID();
+  const requestId = randomUUID();
   try {
     const response = await axios.post(
       `${Url}`,

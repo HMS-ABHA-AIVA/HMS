@@ -29,9 +29,10 @@ export function SignIn() {
     try {
       // Demo bypass credentials
       const isDemo =
-        (email.trim().toLowerCase() === "admin@hospital.com" &&
+        import.meta.env.DEV &&
+        ((email.trim().toLowerCase() === "admin@hospital.com" &&
           (password === "password" || password === "admin123" || password === "demo")) ||
-        email.trim().toLowerCase() === "demo@example.com";
+        email.trim().toLowerCase() === "demo@example.com");
 
       if (isDemo) {
         if (tab === "staff") {
@@ -206,7 +207,7 @@ export function SignIn() {
             )}
           </div>
 
-          {!isRegisteringFacility && (
+          {import.meta.env.DEV && !isRegisteringFacility && (
             <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid var(--line)", fontSize: 12 }}>
               <span style={{ color: "var(--text-dim)" }}>Demo bypass: </span>
               <a

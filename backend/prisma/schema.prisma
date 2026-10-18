@@ -141,6 +141,11 @@ model AbhaTransaction {
 
   expiresAt DateTime
 
+  // Consent artifact sent to ABDM (set when enrolment completes)
+  consentCode       String?
+  consentVersion    String?
+  consentAcceptedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

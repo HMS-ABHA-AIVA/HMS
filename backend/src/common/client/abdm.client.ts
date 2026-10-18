@@ -9,7 +9,24 @@ type AbdmEnvironment = "SANDBOX" | "PRODUCTION";
 // Do not log request bodies or headers: they can contain Aadhaar and OTP data.
 const abdmHttp = axios.create({ timeout: 15_000 });
 
-abdmHttp.interceptors.response.use((response) => response,(error: unknown) => {
+// Optional NHA-evidence audit trail. Metadata only (never bodies, tokens or PII).
+// Enable with ABDM_AUDIT_LOG=true while running the sandbox test cases.
+const AUDIT_LOG_ENABLED = process.env.ABDM_AUDIT_LOG === "true";
+
+abdmHttp.interceptors.response.use((response) => {
+    if (AUDIT_LOG_ENABLED) {
+      const h = response.config?.headers as Record<string, unknown> | undefined;
+      console.info("ABDM_AUDIT", JSON.stringify({
+        requestId: h?.["REQUEST-ID"],
+        timestamp: h?.["TIMESTAMP"],
+        cmId: h?.["X-CM-ID"],
+        method: response.config?.method?.toUpperCase(),
+        url: response.config?.url,
+        status: response.status,
+      }));
+    }
+    return response;
+  },(error: unknown) => {
     if (!axios.isAxiosError(error)) {
       return Promise.reject(error);
     }
@@ -46,6 +63,13 @@ abdmHttp.interceptors.response.use((response) => response,(error: unknown) => {
   },
 );
 
+// ABDM gateway CM-ID: "sbx" for Sandbox, "abdm" for Production.
+export const getCmId = (environment: AbdmEnvironment) =>
+  environment === "SANDBOX" ? "sbx" : "abdm";
+
+// Consent artifact sent to ABDM on ABHA enrolment. Persisted on the AbhaTransaction as well.
+export const ABHA_ENROLLMENT_CONSENT = { code: "abha-enrollment", version: "1.4" } as const;
+
 const getBaseUrl = (environment: AbdmEnvironment) => {
     if (environment === "SANDBOX") {
         return "https://abhasbx.abdm.gov.in/abha/api";
@@ -64,7 +88,7 @@ export const getAbdmPublicKey = async (environment: AbdmEnvironment,accessToken:
         Authorization: `Bearer ${accessToken}`,
          "REQUEST-ID": randomUUID(),
         TIMESTAMP: new Date().toISOString(),
-        "X-CM-ID": environment === "SANDBOX" ? "sbx" : "abdm",
+        "X-CM-ID": getCmId(environment),
       },
     }
   );
@@ -116,10 +140,7 @@ export const aadharCreationClient = async ({accessToken,txnId,encryptedOtp,mobil
 }) => {
 
     const baseUrl = getBaseUrl(environment);
-  const url =
-    environment === "SANDBOX"
-      ? `${baseUrl}/v3/enrollment/enrol/byAadhaar`
-      : `${baseUrl}/v3/enrollment/enrol/byAadhaar`;
+  const url = `${baseUrl}/v3/enrollment/enrol/byAadhaar`;
 
   const response = await abdmHttp.post(
     url,
@@ -132,10 +153,7 @@ export const aadharCreationClient = async ({accessToken,txnId,encryptedOtp,mobil
           mobile,
         },
       },
-      consent: {
-        code: "abha-enrollment",
-        version: "1.4",
-      },
+      consent: { ...ABHA_ENROLLMENT_CONSENT },
     },
     {
       headers: {
@@ -143,7 +161,7 @@ export const aadharCreationClient = async ({accessToken,txnId,encryptedOtp,mobil
         "Content-Type": "application/json",
         "REQUEST-ID": randomUUID(),
         TIMESTAMP: new Date().toISOString(),
-        "X-CM-ID": environment === "SANDBOX" ? "sbx" : "PROD",
+        "X-CM-ID": getCmId(environment),
       },
     }
   );
@@ -359,8 +377,7 @@ export const verifyExistingAbhaMobileUser = async (environment: AbdmEnvironment,
 
 //generate ABHA QR code
 
-export const generateAbhaQr = async ({accessToken, xToken}: {accessToken: string, xToken: string}) => {
-  let environment: AbdmEnvironment = "SANDBOX";
+export const generateAbhaQr = async ({accessToken, xToken, environment}: {accessToken: string, xToken: string, environment: AbdmEnvironment}) => {
   const baseUrl = getBaseUrl(environment);
 
   const response = await abdmHttp.get(
