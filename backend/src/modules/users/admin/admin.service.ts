@@ -2,6 +2,10 @@ import bcrypt from "bcrypt";
 import { prisma } from "../../../config/db.js";
 import {ApiError} from "../../../common/errors/appError.js"
 import jwt from "jsonwebtoken"
+import { randomBytes } from "crypto"
+
+// Compared against when the account does not exist, so a missing account takes as long as a wrong password.
+const DUMMY_HASH = bcrypt.hashSync(randomBytes(16).toString("hex"), 12);
 
 export const loginAdminService = async (email: string,password: string) => {
     const existingUser = await prisma.user.findUnique({
@@ -11,6 +15,7 @@ export const loginAdminService = async (email: string,password: string) => {
     });
 
     if (!existingUser) {
+        await bcrypt.compare(password, DUMMY_HASH);
         throw new ApiError(401, "invalid email or password");
     }
 

@@ -13,11 +13,22 @@ const dateOfBirth = z
 
 export const createPatientSchema = z.object({
 
-    name: z.string().min(2, "Patient name must be at least 2 characters").max(100, "Patient name cannot exceed 100 characters").trim(),
+    // Whitelist: letters in any script, spaces and . ' - (rules out control characters, markup and digits).
+    // Trim first so the length limits apply to what is stored.
+    name: z.string().trim()
+        .min(2, "Patient name must be at least 2 characters")
+        .max(100, "Patient name cannot exceed 100 characters")
+        .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'’\-]*$/u, "Patient name may contain only letters, spaces and . ' -"),
 
     phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
 
-    email: z.email("Invalid email address").optional(),
+    email: z.email("Invalid email address").max(254, "Email address is too long").optional(),
 
     dateOfBirth: dateOfBirth.optional(),
+});
+
+// Paging for the patient list: bounded so one call can never return the whole table.
+export const listPatientsQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1, "limit must be at least 1").max(1000, "limit can be at most 1000").default(500),
+    page: z.coerce.number().int().min(1, "page must be at least 1").default(1),
 });

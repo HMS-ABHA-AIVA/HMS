@@ -4,6 +4,7 @@ import { loginAdminSchema } from "../../../common/validators/admin.validator.js"
 import { ApiError } from "../../../common/errors/appError.js";
 import { loginAdminService ,logoutAdminService } from "./admin.service.js";
 import { clearAbdmCookies } from "../../../common/utils/abdmCookies.js";
+import { logSecurityEvent } from "../../../common/utils/securityLog.js";
 
 
 export const adminLogin = async (req: Request, res: Response, next: NextFunction) => {
@@ -21,6 +22,7 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
 
         // A new login must never inherit the previous user's ABDM session (it may belong to another facility).
         clearAbdmCookies(res);
+        logSecurityEvent("LOGIN_SUCCESS", req, { actor: "staff", userId: loggedInAdmin.user.id, email: loggedInAdmin.user.email });
 
         res.cookie("accessToken", loggedInAdmin.accessToken, {
             httpOnly: true,
@@ -46,6 +48,10 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
             }
         });
     } catch (error) {
+        if (error instanceof ApiError && error.statusCode === 401) {
+            const attempted = (req.body as { email?: unknown } | undefined)?.email;
+            logSecurityEvent("LOGIN_FAILURE", req, { actor: "staff", email: typeof attempted === "string" ? attempted : undefined });
+        }
         next(error)
     }
 }
@@ -60,6 +66,7 @@ export const adminLogout = async (req: userAuthRequest,res: Response,next: NextF
         await logoutAdminService(req.user.id);
 
         clearAbdmCookies(res);
+        logSecurityEvent("LOGOUT", req, { actor: "staff" });
 
         res.clearCookie("accessToken", {
             httpOnly: true,

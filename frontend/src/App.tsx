@@ -6,7 +6,6 @@ import { PatientList } from "@/pages/PatientList";
 import { RegisterPatient } from "@/pages/RegisterPatient";
 import { PatientRecord } from "@/pages/PatientRecord";
 import { OpdQueue } from "@/pages/OpdQueue";
-import { ErrorGallery } from "@/pages/ErrorStates";
 
 export default function App() {
   return (
@@ -35,8 +34,6 @@ export default function App() {
           <Route path="/payroll" element={<OpdQueue />} />
           <Route path="/roster" element={<OpdQueue />} />
 
-          {/* Design error gallery */}
-          <Route path="/errors" element={<ErrorGallery />} />
         </Route>
 
         {/* Fallback */}

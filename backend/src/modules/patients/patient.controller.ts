@@ -1,7 +1,7 @@
 import type {Request , Response , NextFunction} from "express"
 import { ApiError } from "../../common/errors/appError.js";
 import type { userAuthRequest } from "../../common/middlewares/verifyUserJwt.js";
-import { createPatientSchema } from "../../common/validators/patient.validation.js";
+import { createPatientSchema, listPatientsQuerySchema } from "../../common/validators/patient.validation.js";
 import { createPatientService,getAllPatientsService,getPatientTransactionsService} from "./patient.service.js";
 
 
@@ -59,7 +59,12 @@ export const getAllPatientController = async (req: userAuthRequest,res: Response
             throw new ApiError(401, "Unauthorized");
         }
 
-        const patients = await getAllPatientsService(facilityId);
+        const query = listPatientsQuerySchema.safeParse(req.query);
+        if (!query.success) {
+            throw new ApiError(400, `Invalid query parameters: ${query.error.issues.map((issue) => issue.message).join(", ")}`, [], "VALIDATION");
+        }
+
+        const patients = await getAllPatientsService(facilityId, query.data.limit, query.data.page);
 
         return res.status(200).json({
             success: true,

@@ -1,6 +1,11 @@
 import type { Request, Response } from "express";
 import { ApiError } from "../errors/appError.js";
 
+// JWT-style tokens only (base64url, dots). Anything else in a cookie is rejected before it can reach an outgoing header.
+const SAFE_TOKEN = /^[A-Za-z0-9._~+/=-]{10,4096}$/;
+export const readSafeCookie = (value: unknown): string | undefined =>
+  typeof value === "string" && SAFE_TOKEN.test(value) ? value : undefined;
+
 const baseOptions = () => ({
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
@@ -45,7 +50,7 @@ export const setTTokenCookie = (res: Response, tToken: string, expiresIn?: unkno
 };
 
 export const getAbhaSessionToken = (req: Request, patientId: string): string => {
-  const xToken = req.cookies?.abhaXToken;
+  const xToken = readSafeCookie(req.cookies?.abhaXToken);
   const boundPatientId = req.signedCookies?.abhaXPatientId;
   if (!xToken || !boundPatientId || boundPatientId !== patientId) {
     throw new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");

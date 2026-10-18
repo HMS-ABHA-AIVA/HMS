@@ -62,13 +62,13 @@ export function FacilitySetup() {
       return;
     }
 
-    if (staffName.trim().length < 3 || staffName.trim().length > 20) {
-      setStaffError("Name must be between 3 and 20 characters.");
+    if (staffName.trim().length < 3 || staffName.trim().length > 50) {
+      setStaffError("Name must be between 3 and 50 characters.");
       return;
     }
 
-    if (staffPassword.length < 6 || staffPassword.length > 20) {
-      setStaffError("Password must be between 6 and 20 characters.");
+    if (staffPassword.length < 10 || !/[A-Za-z]/.test(staffPassword) || !/\d/.test(staffPassword)) {
+      setStaffError("Password must be at least 10 characters and contain letters and numbers.");
       return;
     }
 
@@ -155,7 +155,7 @@ export function FacilitySetup() {
               onChange={(e) => setStaffName(e.target.value)}
               disabled={staffLoading}
             />
-            <div className="hint">3 to 20 characters</div>
+            <div className="hint">3 to 50 characters</div>
           </div>
           <div className="field">
             <label>Email</label>
@@ -176,7 +176,7 @@ export function FacilitySetup() {
               onChange={(e) => setStaffPassword(e.target.value)}
               disabled={staffLoading}
             />
-            <div className="hint">6 to 20 characters</div>
+            <div className="hint">At least 10 characters, with letters and numbers</div>
           </div>
           {staffError && <div style={{ color: "var(--error)", fontSize: 12.5, marginBottom: 10 }}>{staffError}</div>}
           <button className="btn btn-primary" type="submit" disabled={staffLoading}>

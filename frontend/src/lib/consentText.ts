@@ -7,6 +7,9 @@
 // HOSPITAL_LINK_CONSENT is the hospital's own wording for linking an ABHA that already exists
 // (code "hospital-abha-link", version 1.0, stored with the transaction by the backend).
 
+/** NDHM Health Data Management Policy (the link given in NDHM's secure-development reference, annexure). Confirm it is still current. */
+export const PRIVACY_POLICY_URL = "https://ndhm.gov.in/documents/HealthDataManagementPolicy";
+
 export interface ConsentText {
   title: string;
   /** Matches the code/version the backend stores for this flow. */

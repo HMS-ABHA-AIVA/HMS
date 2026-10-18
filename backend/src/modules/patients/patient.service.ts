@@ -30,11 +30,13 @@ export const createPatientService = async (name: string,phone: string,email: str
 
     return { ...patient, dateOfBirth: toDateOnly(patient.dateOfBirth) };
 };
-export const getAllPatientsService = async (facilityId: string) => {
+export const getAllPatientsService = async (facilityId: string, limit = 500, page = 1) => {
     const patients = await prisma.patient.findMany({
         where: {
             facilityId,
         },
+        take: limit,
+        skip: (page - 1) * limit,
         include: {
             abha: true,
         },

@@ -4,6 +4,8 @@ import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./common/middlewares/errorHandler.middleware.js";
 import { csrfGuard } from "./common/middlewares/csrfGuard.middleware.js";
+import { apiRateLimit, noStore } from "./common/middlewares/apiProtection.middleware.js";
+import { getCookieSecret } from "./common/utils/cookieSecret.js";
 import cookieParser from "cookie-parser";
 import facilityRouter from "./modules/facility/facility.routes.js";
 import patientRouter from "./modules/patients/patient.routes.js";
@@ -21,12 +23,14 @@ app.use(cors({
   origin: frontendOrigin,
   credentials: true,
 }));
+app.use("/api", apiRateLimit);
+app.use("/api", noStore);
 app.use(csrfGuard(frontendOrigin));
 // Behind Render's proxy req.ip would otherwise be the proxy for everyone, collapsing the per-IP OTP rate limit.
 if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
 
 // The secret signs the cookie that binds an ABHA X-token to one patient (see abdmCookies.ts).
-app.use(cookieParser(process.env.USER_ACCESS_TOKEN_SECRET));
+app.use(cookieParser(getCookieSecret()));
 // JSON only: form-encoded bodies are not accepted (see csrfGuard).
 app.use(express.json({ limit: "100kb" }));
 

@@ -2,6 +2,10 @@ import { prisma } from "../../config/db.js"
 import { ApiError } from "../../common/errors/appError.js"
 import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken"
+import { randomBytes } from "crypto"
+
+// Compared against when the account does not exist, so a missing account takes as long as a wrong password.
+const DUMMY_HASH = bcrypt.hashSync(randomBytes(16).toString("hex"), 10);
 import { z } from 'zod'
 import { createAdminSchema, registerFacilitySchema } from "../../common/validators/facility.validators.js"
 import { generateAbdmSessionToken } from "../../common/client/facility.client.js"
@@ -26,6 +30,7 @@ export const loginFacilityService = async (email: string, password: string) => {
     });
 
     if (!facility) {
+        await bcrypt.compare(password, DUMMY_HASH);
         throw new ApiError(401, "Invalid email or password");
     }
 

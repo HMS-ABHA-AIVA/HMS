@@ -5,7 +5,7 @@ import type { userAuthRequest } from "../../../common/middlewares/verifyUserJwt.
 import { abdmTokenRetrievalSchema, aadhaarOtpRequestSchema, aadharOtpVerifySchema, existingAbhaAadhaarOtpRequestSchema, existingAbhaAadhaarOtpVerifySchema, existingAbhaMobileOtpRequestSchema, existingAbhaMobileOtpVerifySchema, verifyExistingAbhaMobileUserSchema,getAbhaProfileSchema, enrolMobileRequestSchema, enrolMobileVerifySchema, abhaAddressSuggestionsQuerySchema, createAbhaAddressSchema, abhaNumberOtpRequestSchema, abhaNumberOtpVerifySchema } from "../../../common/validators/m1.validator.js"
 import { abdmTokenRetrievalService, aadhaarOtpRequestService, aadhaarOtpVerifyService, requestExistingAbhaAadhaarOtpService, verifyExistingAbhaAadhaarOtpService, requestExistingAbhaMobileOtpService, verifyExistingAbhaMobileOtpService, verifyExistingAbhaMobileUserService,generateAbhaQrService, getAbhaProfileService, getAbhaCardService, requestEnrolMobileVerificationService, verifyEnrolMobileService, getAbhaAddressSuggestionsService, createAbhaAddressService, requestAbhaNumberOtpService, verifyAbhaNumberOtpService } from "./m1.service.js";
 import { prisma } from "../../../config/db.js";
-import { setAbdmSessionCookies, setAbhaSessionCookies, setTTokenCookie, getAbhaSessionToken } from "../../../common/utils/abdmCookies.js";
+import { readSafeCookie, setAbdmSessionCookies, setAbhaSessionCookies, setTTokenCookie, getAbhaSessionToken } from "../../../common/utils/abdmCookies.js";
 
 // Validates request input and returns the typed result, or throws a 400 with every zod message.
 const parseOrThrow = <T>(schema: ZodType<T>, input: unknown, label = "body"): T => {
@@ -28,7 +28,7 @@ const requireUser = (req: userAuthRequest) => {
 
 // Every ABHA route except /retrieve needs the ABDM gateway token issued by /retrieve.
 const requireAbdmAccessToken = (req: userAuthRequest): string => {
-  const token = req.cookies?.abdmAccessToken;
+  const token = readSafeCookie(req.cookies?.abdmAccessToken);
   if (!token) {
     throw new ApiError(401, "ABDM authentication required", [], "ABDM_AUTH_REQUIRED");
   }
@@ -207,7 +207,7 @@ export const verifyExistingAbhaMobileUserController = async (req: userAuthReques
     const { abhaNumber, transactionId, environment } = parseOrThrow(verifyExistingAbhaMobileUserSchema, req.body);
     const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const tToken = req.cookies?.t_token;
+    const tToken = readSafeCookie(req.cookies?.t_token);
     if (!tToken) {
       throw new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");
     }

@@ -109,7 +109,7 @@ export function SignIn() {
           {isRegisteringFacility && (
             <>
               <div className="subtabs">
-                Enter your hospital information. Name must be 3–20 characters.
+                Enter your hospital information. Name must be 3–100 characters.
               </div>
               <div className="field">
                 <label>Facility name</label>
@@ -158,7 +158,7 @@ export function SignIn() {
               required
             />
             {isRegisteringFacility && (
-              <div className="hint">Password must be 8 to 20 characters.</div>
+              <div className="hint">At least 10 characters, with letters and numbers.</div>
             )}
           </div>
 

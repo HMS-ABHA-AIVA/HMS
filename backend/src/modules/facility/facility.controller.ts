@@ -3,6 +3,7 @@ import { ApiError } from "../../common/errors/appError.js";
 import { registerFacilitySchema, loginFacilitySchema, addAbdmDetailsSchema ,createAdminSchema } from "../../common/validators/facility.validators.js";
 import { registerFacilityService, loginFacilityService, logoutFacilityService, addAbdmDetailsService ,createAdminService} from "./facility.service.js";
 import bcrypt from "bcrypt";
+import { logSecurityEvent } from "../../common/utils/securityLog.js";
 // import {encrypt,decrypt} from "../../common/utils/encryption.ts"
 import type { authRequest } from "../../common/middlewares/verifyFacilityJwt.ts";
 
@@ -23,6 +24,8 @@ export const registerFacility = async (req: Request, res: Response, next: NextFu
     if (!facility) {
       throw new ApiError(400, "facility registration failed");
     }
+
+    logSecurityEvent("FACILITY_REGISTERED", req, { facilityId: facility.id, hfrId: facility.hfrId });
 
     res.status(201).json({
       success: true,
@@ -57,6 +60,8 @@ export const loginFacility = async (req: Request, res: Response, next: NextFunct
 
     const { facility, tokens } = await loginFacilityService(email, password);
 
+    logSecurityEvent("LOGIN_SUCCESS", req, { actor: "facility", email: facility.email });
+
     res.cookie("accessToken", tokens.accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -82,6 +87,10 @@ export const loginFacility = async (req: Request, res: Response, next: NextFunct
     });
 
   } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 401) {
+      const attempted = (req.body as { email?: unknown } | undefined)?.email;
+      logSecurityEvent("LOGIN_FAILURE", req, { actor: "facility", email: typeof attempted === "string" ? attempted : undefined });
+    }
     next(error);
   }
 }
@@ -95,6 +104,7 @@ export const logoutFacility = async (req: authRequest, res: Response,next:NextFu
     }
 
     const logoutcount = await logoutFacilityService(facilityId);
+    logSecurityEvent("LOGOUT", req, { actor: "facility" });
 
     res.clearCookie("accessToken", {
       httpOnly: true,
@@ -144,6 +154,9 @@ export const addAbdmDetails = async (req: authRequest, res: Response, next: Next
       environment
     );
 
+    // Security-configuration change (privileged action): record who, never the secret.
+    logSecurityEvent("ABDM_CREDENTIALS_SAVED", req, { environment });
+
     res.status(200).json({
       success: true,
       message: "ABDM credentials configured successfully",
@@ -176,6 +189,8 @@ export const createAdmin = async (req: authRequest, res: Response, next: NextFun
 
     const { name, email, password } = result.data;
     const user = await createAdminService(req.facility!.id,result.data);
+
+    logSecurityEvent("STAFF_ACCOUNT_CREATED", req, { staffUserId: user.id });
 
     res.status(201).json({
       success: true,
