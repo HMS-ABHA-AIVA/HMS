@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { withAbdmSession } from '@/api/abdmSession';
 import { ConsentBox } from '@/components/ConsentBox';
-import { ABHA_CREATE_CONSENT, HOSPITAL_LINK_CONSENT } from '@/lib/consentText';
+import type { ConsentLanguage } from '@/lib/consentText';
 import { confirmAbhaLink, createPatient, requestAbhaCreateOtp, requestAbhaLinkOtp, verifyAbhaCreateOtp } from '@/api/endpoints';
 import { Modal } from '@/components/ui/Modal';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -42,6 +42,7 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
   const [abhaMethod, setAbhaMethod] = useState<AbhaMethod | null>(null);
   const [aadhaar, setAadhaar] = useState('');
   const [consentGiven, setConsentGiven] = useState(false);
+  const [consentLanguage, setConsentLanguage] = useState<ConsentLanguage>('en');
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
   const [mobile, setMobile] = useState(patient?.phone ?? '');
@@ -102,12 +103,12 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
     try {
       if (abhaMethod === 'create') {
         const { data } = await withAbdmSession(environment, () =>
-          requestAbhaCreateOtp({ patientId: newPatient.id, aadhaar, environment, consent: true })
+          requestAbhaCreateOtp({ patientId: newPatient.id, aadhaar, environment, consent: true, consentLanguage })
         );
         setTransactionId(data.transactionId);
       } else {
         const { data } = await withAbdmSession(environment, () =>
-          requestAbhaLinkOtp({ patientId: newPatient.id, aadhaar, environment, consent: true })
+          requestAbhaLinkOtp({ patientId: newPatient.id, aadhaar, environment, consent: true, consentLanguage })
         );
         setTransactionId(data.transactionId);
       }
@@ -233,7 +234,9 @@ export function NewRegistrationModal({ onClose, patient }: { onClose: () => void
               <label>Aadhaar number</label>
               <input value={aadhaar} onChange={(e) => setAadhaar(e.target.value)} placeholder="12-digit Aadhaar" inputMode="numeric" maxLength={12} autoComplete="off" />
               <ConsentBox
-                consent={abhaMethod === 'create' ? ABHA_CREATE_CONSENT : HOSPITAL_LINK_CONSENT}
+                kind={abhaMethod === 'create' ? 'create' : 'link'}
+                language={consentLanguage}
+                onLanguageChange={setConsentLanguage}
                 checked={consentGiven}
                 onChange={setConsentGiven}
                 disabled={abhaBusy}

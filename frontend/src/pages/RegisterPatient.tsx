@@ -19,7 +19,9 @@ import {
 } from "@/api/endpoints";
 import { CreateFollowUps } from "@/components/CreateFollowUps";
 import { ConsentBox } from "@/components/ConsentBox";
-import { ABHA_CREATE_CONSENT, HOSPITAL_LINK_CONSENT } from "@/lib/consentText";
+import type { ConsentLanguage } from "@/lib/consentText";
+import { formatOtpMessage } from "@/lib/otpMessage";
+import { ContactUpdate } from "@/components/ContactUpdate";
 import { withAbdmSession } from "@/api/abdmSession";
 import { StopState } from "@/pages/ErrorStates";
 import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
@@ -57,6 +59,7 @@ export function RegisterPatient() {
   const [abhaNumber, setAbhaNumber] = useState("");
   const [channel, setChannel] = useState<AbhaLoginChannel>("aadhaar");
   const [consent, setConsent] = useState(false);
+  const [consentLanguage, setConsentLanguage] = useState<ConsentLanguage>("en");
 
   // Step 4: OTP verification
   const [transactionId, setTransactionId] = useState("");
@@ -81,7 +84,9 @@ export function RegisterPatient() {
   // resends used for the current OTP request (NHA: at most 2, each after 60 s)
   const [resendCount, setResendCount] = useState(0);
   // the ABHA that was just created / linked, shown on the success screen
-  const [linked, setLinked] = useState<{ abhaNumber: string; abhaAddress: string | null } | null>(null);
+  const [linked, setLinked] = useState<{ abhaNumber: string; abhaAddress: string | null; mobileMatchesRecord?: boolean | undefined } | null>(null);
+  // Link flows: when the ABHA's mobile differs from the hospital record, offer (Yes/No) to update the ABHA
+  const [contactPrompt, setContactPrompt] = useState<"ask" | "update" | "no">("ask");
 
   // Counts down the OTP resend cool-down.
   useEffect(() => {
@@ -216,14 +221,14 @@ export function RegisterPatient() {
       const cleanMobile = linkMobileNumber.replace(/\D/g, "");
       const res =
         mode === "create_aadhaar"
-          ? await requestAbhaCreateOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true })
+          ? await requestAbhaCreateOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true, consentLanguage })
           : mode === "link_aadhaar"
-            ? await requestAbhaLinkOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true })
+            ? await requestAbhaLinkOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true, consentLanguage })
             : mode === "link_number"
-              ? await requestAbhaNumberOtp({ patientId, abhaNumber: abhaNumber.replace(/\D/g, ""), channel, environment, consent: true })
-              : await requestAbhaMobileOtp({ patientId, mobile: cleanMobile, environment, consent: true });
+              ? await requestAbhaNumberOtp({ patientId, abhaNumber: abhaNumber.replace(/\D/g, ""), channel, environment, consent: true, consentLanguage })
+              : await requestAbhaMobileOtp({ patientId, mobile: cleanMobile, environment, consent: true, consentLanguage });
       setTransactionId(res.data.transactionId);
-      setOtpMessage(res.message ?? "");
+      setOtpMessage(formatOtpMessage(mode, res.message ?? "", channel));
     });
     setResendIn(OTP_RESEND_SECONDS);
   }
@@ -265,7 +270,7 @@ export function RegisterPatient() {
             transactionId,
             environment,
           });
-          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
+          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
         });
         setStep(5);
       } catch (err) {
@@ -306,7 +311,7 @@ export function RegisterPatient() {
             });
             setStep(6);
           } else {
-            setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
+            setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
             setStep(5);
           }
         } else if (mode === "link_aadhaar") {
@@ -315,7 +320,7 @@ export function RegisterPatient() {
             otp: cleanOtp,
             environment,
           });
-          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
+          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
           setStep(5);
         } else if (mode === "link_number") {
           const res = await confirmAbhaNumberOtp({
@@ -324,7 +329,7 @@ export function RegisterPatient() {
             channel,
             environment,
           });
-          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress });
+          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
           setStep(5);
         } else if (mode === "link_mobile") {
             // Confirm OTP and retrieve linked accounts
@@ -341,7 +346,7 @@ export function RegisterPatient() {
                 transactionId: res.data.transactionId,
                 environment,
               });
-              setLinked({ abhaNumber: linkedRes.data.abhaNumber, abhaAddress: linkedRes.data.abhaAddress });
+              setLinked({ abhaNumber: linkedRes.data.abhaNumber, abhaAddress: linkedRes.data.abhaAddress, mobileMatchesRecord: linkedRes.data.mobileMatchesRecord });
               setStep(5);
             } else if (accounts.length > 1) {
               setMobileAccounts(accounts);
@@ -660,7 +665,9 @@ export function RegisterPatient() {
               </div>
             )}
             <ConsentBox
-              consent={mode === "create_aadhaar" ? ABHA_CREATE_CONSENT : HOSPITAL_LINK_CONSENT}
+              kind={mode === "create_aadhaar" ? "create" : "link"}
+              language={consentLanguage}
+              onLanguageChange={setConsentLanguage}
               checked={consent}
               onChange={setConsent}
               disabled={loading}
@@ -801,6 +808,36 @@ export function RegisterPatient() {
                 <div className="mono">{linked.abhaNumber}</div>
                 <div className="k">ABHA address</div>
                 <div className="mono">{linked.abhaAddress ?? "—"}</div>
+              </div>
+            )}
+            {linked?.mobileMatchesRecord === false && contactPrompt !== "no" && (
+              <div style={{ marginBottom: 14 }}>
+                {contactPrompt === "ask" ? (
+                  <div className="notice">
+                    <div style={{ marginBottom: 8 }}>
+                      The mobile number held on this ABHA is different from the number on the hospital record (+91{" "}
+                      {linkMobileNumber.replace(/\D/g, "")}). Update the ABHA to use the hospital's number?
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button className="btn btn-primary" type="button" onClick={() => setContactPrompt("update")}>
+                        Yes, update the ABHA
+                      </button>
+                      <button className="btn btn-ghost" type="button" onClick={() => setContactPrompt("no")}>
+                        No, keep it as it is
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <ContactUpdate
+                    patientId={patientId}
+                    type="mobile"
+                    environment={environment}
+                    initialValue={linkMobileNumber.replace(/\D/g, "")}
+                    intro="An OTP is sent to the new number. This changes the mobile on the patient's ABHA at ABDM."
+                    onDone={() => undefined}
+                    onCancel={() => setContactPrompt("no")}
+                  />
+                )}
               </div>
             )}
             <div className="form-actions" style={{ justifyContent: "flex-start", gap: 12 }}>

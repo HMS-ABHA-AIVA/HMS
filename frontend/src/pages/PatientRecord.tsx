@@ -14,6 +14,7 @@ import {
   type FullAbhaProfile,
 } from "@/api/endpoints";
 import { withAbdmSession } from "@/api/abdmSession";
+import { AbhaProfileDetails } from "@/components/AbhaProfileDetails";
 
 function formatDateTime(dateStr?: string) {
   if (!dateStr) return "—";
@@ -65,6 +66,8 @@ export function PatientRecord() {
   const [cardBusy, setCardBusy] = useState(false);
   const [cardError, setCardError] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  // bumped after the ABHA's mobile/email changed so the live profile is read again
+  const [reloadKey, setReloadKey] = useState(0);
 
   // In-browser only (as documented until backend can store these)
   const allergies: string[] = [];
@@ -138,7 +141,7 @@ export function PatientRecord() {
       active = false;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [patientId, environment]);
+  }, [patientId, environment, reloadKey]);
 
   // Downloads the official ABHA card from ABDM (needs the ABHA to be verified in this session, like the QR).
   async function handleDownloadCard() {
@@ -270,16 +273,15 @@ export function PatientRecord() {
                     Linked at {facilityName}
                   </div>
 
-                  <div className="kv">
-                    <div className="k">Name on ABHA</div>
-                    <div>{liveProfile?.name || patient?.name}</div>
-                    <div className="k">Date of birth</div>
-                    <div>{liveProfile?.dob || "—"}</div>
-                    <div className="k">Address</div>
-                    <div>{liveProfile?.address || "—"}</div>
-                    <div className="k">KYC</div>
-                    <div>{liveProfile?.kycVerified === true ? "Verified with Aadhaar" : liveProfile?.kycVerified === false ? "Not verified" : "—"}</div>
-                  </div>
+                  {patient && (
+                    <AbhaProfileDetails
+                      patient={patient}
+                      liveProfile={liveProfile}
+                      environment={environment}
+                      onPatientUpdated={setPatient}
+                      onAbhaContactUpdated={() => setReloadKey((k) => k + 1)}
+                    />
+                  )}
 
                   <p className="abha-note">
                     {liveNote ||

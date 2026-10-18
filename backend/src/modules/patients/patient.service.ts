@@ -51,6 +51,10 @@ export const getAllPatientsService = async (facilityId: string, limit = 500, pag
     phone: patient.phone,
     email: patient.email,
     dateOfBirth: toDateOnly(patient.dateOfBirth),
+    gender: patient.gender,
+    address: patient.address,
+    stateName: patient.stateName,
+    districtName: patient.districtName,
     createdAt: patient.createdAt,
     updatedAt: patient.updatedAt,
     abha: patient.abha
@@ -86,4 +90,34 @@ export const getPatientTransactionsService = async (patientId: string,facilityId
   });
 
   return transactions;
+};
+export const updatePatientService = async (
+    patientId: string,
+    facilityId: string,
+    changes: { phone?: string | undefined; email?: string | undefined; address?: string | undefined; stateName?: string | undefined; districtName?: string | undefined },
+) => {
+    const patient = await prisma.patient.findFirst({ where: { id: patientId, facilityId } });
+
+    if (!patient) {
+        throw new ApiError(404, "Patient not found", [], "PATIENT_NOT_FOUND");
+    }
+
+    if (changes.phone && changes.phone !== patient.phone) {
+        const taken = await prisma.patient.findFirst({ where: { phone: changes.phone, facilityId, NOT: { id: patientId } } });
+        if (taken) {
+            throw new ApiError(409, "Another patient with this phone number already exists");
+        }
+    }
+
+    // Only the fields that were sent are touched; "" clears an optional text field.
+    const data: { phone?: string; email?: string | null; address?: string | null; stateName?: string | null; districtName?: string | null } = {};
+    if (changes.phone !== undefined) data.phone = changes.phone;
+    if (changes.email !== undefined) data.email = changes.email === "" ? null : changes.email;
+    if (changes.address !== undefined) data.address = changes.address === "" ? null : changes.address;
+    if (changes.stateName !== undefined) data.stateName = changes.stateName === "" ? null : changes.stateName;
+    if (changes.districtName !== undefined) data.districtName = changes.districtName === "" ? null : changes.districtName;
+
+    const updated = await prisma.patient.update({ where: { id: patientId }, data });
+
+    return { ...updated, dateOfBirth: toDateOnly(updated.dateOfBirth) };
 };

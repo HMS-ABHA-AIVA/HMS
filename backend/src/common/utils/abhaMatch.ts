@@ -21,6 +21,14 @@ export interface AbhaDemographics {
   dayOfBirth?: unknown;
   monthOfBirth?: unknown;
   yearOfBirth?: unknown;
+  // used to fill the hospital record (never to match)
+  gender?: unknown;
+  address?: unknown;
+  stateName?: unknown;
+  state?: unknown;
+  districtName?: unknown;
+  district?: unknown;
+  mobile?: unknown;
 }
 
 const TITLES = new Set(["mr", "mrs", "ms", "miss", "dr", "shri", "smt", "sri", "shree", "late", "master"]);

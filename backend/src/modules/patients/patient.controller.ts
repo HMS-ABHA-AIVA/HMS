@@ -1,8 +1,9 @@
 import type {Request , Response , NextFunction} from "express"
 import { ApiError } from "../../common/errors/appError.js";
 import type { userAuthRequest } from "../../common/middlewares/verifyUserJwt.js";
-import { createPatientSchema, listPatientsQuerySchema } from "../../common/validators/patient.validation.js";
-import { createPatientService,getAllPatientsService,getPatientTransactionsService} from "./patient.service.js";
+import { createPatientSchema, listPatientsQuerySchema, updatePatientSchema } from "../../common/validators/patient.validation.js";
+import { createPatientService,getAllPatientsService,getPatientTransactionsService,updatePatientService} from "./patient.service.js";
+import { logSecurityEvent } from "../../common/utils/securityLog.js";
 
 
 
@@ -104,6 +105,36 @@ export const getPatientTransactionsController = async (
       success: true,
       message: "Patient transactions retrieved successfully",
       data: transactions,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+export const updatePatientController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user) {
+      throw new ApiError(401, "Unauthorized access");
+    }
+
+    const { patientId } = req.params;
+    if (typeof patientId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patientId)) {
+      throw new ApiError(400, "Invalid request: patient ID must be a UUID", [], "VALIDATION");
+    }
+
+    const parsed = updatePatientSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new ApiError(400, `Invalid request body: ${parsed.error.issues.map((issue) => issue.message).join(", ")}`, [], "VALIDATION");
+    }
+
+    const patient = await updatePatientService(patientId, req.user.facilityId, parsed.data);
+
+    // which fields changed, never their values
+    logSecurityEvent("PATIENT_UPDATED", req, { patientId, fields: Object.keys(parsed.data).join(",") });
+
+    return res.status(200).json({
+      success: true,
+      message: "Patient updated successfully",
+      data: patient,
     });
   } catch (error) {
     next(error);

@@ -2,8 +2,8 @@ import { prisma } from "../../../config/db.js";
 import { ApiError } from "../../../common/errors/appError.js";
 import { generateAbdmSessionToken } from "../../../common/client/facility.client.js";
 import { decrypt, encryptWithAbdmPublicKey } from "../../../common/utils/encryption.js";
-import { findAbhaMismatches, type AbhaDemographics } from "../../../common/utils/abhaMatch.js";
-import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, getAbhaCard, requestEnrolMobileOtp, verifyEnrolMobileOtp, getAbhaAddressSuggestions, createAbhaAddress, requestAbhaNumberOtp, verifyAbhaNumberOtp, ABHA_ENROLLMENT_CONSENT, HOSPITAL_LINK_CONSENT, getCmId, type AbhaLoginChannel } from "../../../common/client/abdm.client.js";
+import { findAbhaMismatches, parseAbhaDob, type AbhaDemographics } from "../../../common/utils/abhaMatch.js";
+import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, getAbhaCard, requestEnrolMobileOtp, verifyEnrolMobileOtp, getAbhaAddressSuggestions, createAbhaAddress, requestAbhaNumberOtp, verifyAbhaNumberOtp, ABHA_ENROLLMENT_CONSENT, HOSPITAL_LINK_CONSENT, getCmId, requestProfileContactOtp, verifyProfileContactOtp, abhaLogout, type AbhaLoginChannel, type ProfileContactType } from "../../../common/client/abdm.client.js";
 
 type Environment = "SANDBOX" | "PRODUCTION";
 
@@ -38,7 +38,7 @@ const findPatientInFacility = async (patientId: string, facilityId: string) => {
 };
 
 // Loads a pending transaction and enforces facility, purpose, status and expiry.
-const loadPendingTransaction = async (transactionId: string, facilityId: string, purpose: "ENROLLMENT" | "VERIFICATION") => {
+const loadPendingTransaction = async (transactionId: string, facilityId: string, purpose: "ENROLLMENT" | "VERIFICATION" | "PROFILE_UPDATE") => {
   const transaction = await prisma.abhaTransaction.findUnique({
     where: { id: transactionId },
   });
@@ -85,7 +85,10 @@ const linkAbhaToPatient = async (
   demographics: AbhaDemographics,
   newlyCreated = false,
 ) => {
-  const patient = await prisma.patient.findUnique({ where: { id: patientId }, select: { name: true, dateOfBirth: true } });
+  const patient = await prisma.patient.findUnique({
+    where: { id: patientId },
+    select: { name: true, dateOfBirth: true, phone: true, gender: true, address: true, stateName: true, districtName: true },
+  });
   if (!patient) {
     throw new ApiError(404, "Patient not found", [], "PATIENT_NOT_FOUND");
   }
@@ -120,11 +123,71 @@ const linkAbhaToPatient = async (
     throw new ApiError(409, "Patient is already linked to a different ABHA", [], "PATIENT_ALREADY_LINKED");
   }
 
-  return prisma.abhaPatient.upsert({
+  const abhaPatient = await prisma.abhaPatient.upsert({
     where: { patientId },
     update: { abhaAddress },
     create: { patientId, abhaNumber, abhaAddress },
   });
+
+  await fillPatientFromAbha(patientId, patient, demographics);
+
+  return { ...abhaPatient, mobileMatchesRecord: mobileMatchesRecord(patient.phone, demographics.mobile) };
+};
+
+const last10 = (value: string) => digitsOnly(value).slice(-10);
+
+// undefined when ABDM did not return a mobile, so the UI only asks about a real difference
+const mobileMatchesRecord = (recordPhone: string, abhaMobile: unknown): boolean | undefined =>
+  typeof abhaMobile === "string" && digitsOnly(abhaMobile).length >= 10 ? last10(abhaMobile) === last10(recordPhone) : undefined;
+
+const normalizeGender = (value: unknown): "M" | "F" | "O" | undefined => {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === "m" || v === "male") return "M";
+  if (v === "f" || v === "female") return "F";
+  if (v === "o" || v === "other" || v === "t" || v === "transgender") return "O";
+  return undefined;
+};
+
+const cleanText = (value: unknown, max = 300): string | undefined =>
+  typeof value === "string" && value.trim() ? value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : undefined;
+
+// After a successful link, copy gender / address / state / district (and the date of birth when the record
+// has none) from the ABHA profile. Only empty fields are filled: what the hospital already holds is never overwritten.
+const fillPatientFromAbha = async (
+  patientId: string,
+  patient: { dateOfBirth: Date | null; gender: string | null; address: string | null; stateName: string | null; districtName: string | null },
+  demographics: AbhaDemographics,
+) => {
+  const data: { gender?: string; address?: string; stateName?: string; districtName?: string; dateOfBirth?: Date } = {};
+
+  if (!patient.gender) {
+    const gender = normalizeGender(demographics.gender);
+    if (gender) data.gender = gender;
+  }
+  if (!patient.address) {
+    const address = cleanText(demographics.address);
+    if (address) data.address = address;
+  }
+  if (!patient.stateName) {
+    const state = cleanText(demographics.stateName ?? demographics.state, 80);
+    if (state) data.stateName = state;
+  }
+  if (!patient.districtName) {
+    const district = cleanText(demographics.districtName ?? demographics.district, 80);
+    if (district) data.districtName = district;
+  }
+  if (!patient.dateOfBirth) {
+    const dob = parseAbhaDob(demographics);
+    // 01-01 is how UIDAI stores a year-only birth date, so it is not a real date of birth
+    if (dob && dob.month && dob.day && !(dob.month === 1 && dob.day === 1)) {
+      data.dateOfBirth = new Date(Date.UTC(dob.year, dob.month - 1, dob.day));
+    }
+  }
+
+  if (Object.keys(data).length > 0) {
+    await prisma.patient.update({ where: { id: patientId }, data });
+  }
 };
 
 // The X-token calls (profile / QR) answer 401 when the token is missing or stale.
@@ -191,7 +254,7 @@ export const abdmTokenRetrievalService = async (facilityId: string, userId: stri
 // creation - aadhaar
 // ---------------------------------------------------------------------------
 
-export const aadhaarOtpRequestService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string) => {
+export const aadhaarOtpRequestService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string, consentLanguage = "en") => {
   // Make sure patient belongs to authenticated user's facility
   const patient = await findPatientInFacility(patientId, facilityId);
 
@@ -223,6 +286,7 @@ export const aadhaarOtpRequestService = async (patientId: string, facilityId: st
       consentCode: ABHA_ENROLLMENT_CONSENT.code,
       consentVersion: ABHA_ENROLLMENT_CONSENT.version,
       consentAcceptedAt: new Date(),
+      consentLanguage,
     },
   });
 
@@ -360,6 +424,7 @@ const finishLoginVerification = async (
     message: abdmResponse.message,
     abhaNumber: abhaPatient.abhaNumber,
     abhaAddress: abhaPatient.abhaAddress,
+    mobileMatchesRecord: abhaPatient.mobileMatchesRecord,
     token: xToken,
     expiresIn,
   };
@@ -370,7 +435,7 @@ const finishLoginVerification = async (
 // verification (link existing ABHA) - aadhaar
 // ---------------------------------------------------------------------------
 
-export const requestExistingAbhaAadhaarOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string) => {
+export const requestExistingAbhaAadhaarOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, aadhaar: string, consentLanguage = "en") => {
   const patient = await findPatientInFacility(patientId, facilityId);
 
   const encryptedAadhaar = await encryptForAbdm(environment, abdmAccessToken, aadhaar);
@@ -396,6 +461,7 @@ export const requestExistingAbhaAadhaarOtpService = async (patientId: string, fa
       consentCode: HOSPITAL_LINK_CONSENT.code,
       consentVersion: HOSPITAL_LINK_CONSENT.version,
       consentAcceptedAt: new Date(),
+      consentLanguage,
     },
   });
 
@@ -427,7 +493,7 @@ export const verifyExistingAbhaAadhaarOtpService = async (transactionId: string,
 // ---------------------------------------------------------------------------
 
 //step 1 - request otp
-export const requestExistingAbhaMobileOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, mobile: string) => {
+export const requestExistingAbhaMobileOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, mobile: string, consentLanguage = "en") => {
   await findPatientInFacility(patientId, facilityId);
 
   const encryptedMobile = await encryptForAbdm(environment, abdmAccessToken, mobile);
@@ -449,6 +515,7 @@ export const requestExistingAbhaMobileOtpService = async (patientId: string, fac
       consentCode: HOSPITAL_LINK_CONSENT.code,
       consentVersion: HOSPITAL_LINK_CONSENT.version,
       consentAcceptedAt: new Date(),
+      consentLanguage,
     },
   });
 
@@ -538,6 +605,7 @@ export const verifyExistingAbhaMobileUserService = async (abhaNumber: string, tr
 
     abhaNumber: abhaPatient.abhaNumber,
     abhaAddress: abhaPatient.abhaAddress,
+    mobileMatchesRecord: abhaPatient.mobileMatchesRecord,
 
     name: profile.name,
     gender: profile.gender,
@@ -732,7 +800,7 @@ export const formatAbhaNumber = (value: string) => {
   return `${d.slice(0, 2)}-${d.slice(2, 6)}-${d.slice(6, 10)}-${d.slice(10, 14)}`;
 };
 
-export const requestAbhaNumberOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, abhaNumber: string, channel: AbhaLoginChannel) => {
+export const requestAbhaNumberOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, abhaNumber: string, channel: AbhaLoginChannel, consentLanguage = "en") => {
   const patient = await findPatientInFacility(patientId, facilityId);
 
   const encryptedAbhaNumber = await encryptForAbdm(environment, abdmAccessToken, formatAbhaNumber(abhaNumber));
@@ -759,6 +827,7 @@ export const requestAbhaNumberOtpService = async (patientId: string, facilityId:
       consentCode: HOSPITAL_LINK_CONSENT.code,
       consentVersion: HOSPITAL_LINK_CONSENT.version,
       consentAcceptedAt: new Date(),
+      consentLanguage,
     },
   });
 
@@ -782,4 +851,60 @@ export const verifyAbhaNumberOtpService = async (transactionId: string, facility
   });
 
   return finishLoginVerification(transaction, abdmResponse, abdmAccessToken, environment);
+};
+
+// ---------------------------------------------------------------------------
+// update the ABHA's mobile number or email (needs the patient's ABHA session / X-token)
+// ---------------------------------------------------------------------------
+
+//step 1 - OTP to the NEW mobile / email
+export const requestProfileContactUpdateService = async (patientId: string, facilityId: string, abdmAccessToken: string, xToken: string, environment: Environment, type: ProfileContactType, value: string) => {
+  await requireLinkedAbha(patientId, facilityId);
+
+  const encryptedValue = await encryptForAbdm(environment, abdmAccessToken, value);
+
+  const abdmResponse = await requestProfileContactOtp({ accessToken: abdmAccessToken, xToken, encryptedValue, type, environment }).catch(asAbhaSessionError);
+
+  if (!abdmResponse.txnId) {
+    throw new ApiError(502, "ABDM did not return a transaction ID");
+  }
+
+  const transaction = await prisma.abhaTransaction.create({
+    data: {
+      txnId: abdmResponse.txnId,
+      patientId,
+      facilityId,
+      purpose: "PROFILE_UPDATE",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
+    },
+  });
+
+  return { transactionId: transaction.id, message: abdmResponse.message };
+};
+
+//step 2 - verify that OTP; ABDM then holds the new value
+export const verifyProfileContactUpdateService = async (patientId: string, transactionId: string, facilityId: string, abdmAccessToken: string, xToken: string, environment: Environment, otp: string, type: ProfileContactType) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "PROFILE_UPDATE");
+
+  if (transaction.patientId !== patientId) {
+    throw new ApiError(403, "Transaction does not belong to this patient");
+  }
+
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
+
+  const abdmResponse = await verifyProfileContactOtp({ accessToken: abdmAccessToken, xToken, txnId: transaction.txnId, encryptedOtp, type, environment }).catch(asAbhaSessionError);
+
+  if (abdmResponse.authResult && abdmResponse.authResult !== "success") {
+    throw new ApiError(422, abdmResponse.message || "The OTP could not be verified. Check it and try again.", [], "OTP_INVALID");
+  }
+
+  await setTransactionStatus(transaction.id, "COMPLETED");
+
+  return { message: abdmResponse.message ?? (type === "mobile" ? "ABHA mobile number updated" : "ABHA email updated") };
+};
+
+// Best-effort: end the patient's ABHA session at ABDM when staff sign out. Never blocks or fails the sign-out.
+export const endAbhaSessionService = (abdmAccessToken: string, xToken: string, environment: Environment) => {
+  void abhaLogout({ accessToken: abdmAccessToken, xToken, environment }).catch(() => undefined);
 };

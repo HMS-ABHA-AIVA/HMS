@@ -1,5 +1,5 @@
 import express from "express";
-import {aadhaarOtpRequestController, aadhaarOtpVerifyController, abdmTokenRetrievalRequest, generateAbhaQrController, getAbhaProfileController, getAbhaCardController, requestExistingAbhaAadhaarOtpController, requestExistingAbhaMobileOtpController, verifyExistingAbhaAadhaarOtpController, verifyExistingAbhaMobileOtpController, verifyExistingAbhaMobileUserController, enrolMobileRequestController, enrolMobileVerifyController, abhaAddressSuggestionsController, createAbhaAddressController, abhaNumberOtpRequestController, abhaNumberOtpVerifyController, listAbhaAuditController} from "./m1.controller.js";
+import {aadhaarOtpRequestController, aadhaarOtpVerifyController, abdmTokenRetrievalRequest, generateAbhaQrController, getAbhaProfileController, getAbhaCardController, requestExistingAbhaAadhaarOtpController, requestExistingAbhaMobileOtpController, verifyExistingAbhaAadhaarOtpController, verifyExistingAbhaMobileOtpController, verifyExistingAbhaMobileUserController, enrolMobileRequestController, enrolMobileVerifyController, abhaAddressSuggestionsController, createAbhaAddressController, abhaNumberOtpRequestController, abhaNumberOtpVerifyController, listAbhaAuditController, profileContactRequestController, profileContactVerifyController} from "./m1.controller.js";
 import {verifyUserJwt} from "../../../common/middlewares/verifyUserJwt.js"
 import {rateLimit} from "../../../common/middlewares/rateLimit.middleware.js"
 import {auditAbha} from "../../../common/middlewares/auditAbha.middleware.js"
@@ -44,6 +44,10 @@ abdmRouter.get("/profile/qr",verifyUserJwt,auditAbha("ABHA_QR_VIEW"),generateAbh
 abdmRouter.get("/profile/card",verifyUserJwt,auditAbha("ABHA_CARD_DOWNLOAD"),getAbhaCardController);
 //get ABHA profile
 abdmRouter.get("/profile",verifyUserJwt,auditAbha("ABHA_PROFILE_VIEW"),getAbhaProfileController);
+
+//update the ABHA's mobile number / email: OTP to the new value, then verify
+abdmRouter.post("/profile/contact/request",otpLimiter,verifyUserJwt,auditAbha("ABHA_CONTACT_UPDATE_OTP_REQUEST"),profileContactRequestController);
+abdmRouter.post("/profile/contact/verify",otpLimiter,verifyUserJwt,auditAbha("ABHA_CONTACT_UPDATE_OTP_VERIFY"),profileContactVerifyController);
 
 //audit trail
 abdmRouter.get("/audit",verifyUserJwt,listAbhaAuditController);

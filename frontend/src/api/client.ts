@@ -23,15 +23,15 @@ export function setSessionExpiredHandler(handler: () => void) {
   onSessionExpired = handler;
 }
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
       method,
       credentials: 'include',
       // The API only accepts JSON on state-changing requests (CSRF guard), even when there is no payload.
-      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
-      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+      headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : undefined,
+      body: method !== 'GET' ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Check that the backend is running.');
@@ -56,6 +56,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 }
 
 export const post = <T>(path: string, body?: unknown) => request<T>('POST', path, body);
+export const patch = <T>(path: string, body?: unknown) => request<T>('PATCH', path, body);
 export const get = <T>(path: string) => request<T>('GET', path);
 
 export async function getBlob(path: string): Promise<Blob> {

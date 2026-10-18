@@ -1,21 +1,47 @@
-import { PRIVACY_POLICY_URL, type ConsentText } from "@/lib/consentText";
+import { CONSENT_LANGUAGES, PRIVACY_POLICY_URL, consentFor, type ConsentKind, type ConsentLanguage } from "@/lib/consentText";
 
-/** Shows the full consent wording and a tick box. The Send OTP button stays blocked until it is ticked. */
+/**
+ * Shows the full consent wording (English or Hindi) and a tick box. The Send OTP button stays blocked until it is
+ * ticked. The language the patient chose is reported through onLanguageChange and recorded with the transaction.
+ */
 export function ConsentBox({
-  consent,
+  kind,
+  language,
+  onLanguageChange,
   checked,
   onChange,
   disabled,
 }: {
-  consent: ConsentText;
+  kind: ConsentKind;
+  language: ConsentLanguage;
+  onLanguageChange: (language: ConsentLanguage) => void;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
 }) {
+  const consent = consentFor(kind, language);
+
   return (
     <div style={{ marginTop: 14 }}>
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{consent.title}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 8 }}>
+        <div style={{ fontWeight: 600, fontSize: 13 }}>{consent.title}</div>
+        <div className="seg" role="group" aria-label={consent.languageLabel}>
+          {CONSENT_LANGUAGES.map((l) => (
+            <button
+              key={l.code}
+              type="button"
+              className={language === l.code ? "on" : ""}
+              onClick={() => onLanguageChange(l.code)}
+              disabled={disabled}
+              lang={l.code}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div
+        lang={language}
         style={{
           maxHeight: 150,
           overflowY: "auto",
@@ -28,7 +54,7 @@ export function ConsentBox({
         tabIndex={0}
         aria-label={consent.title}
       >
-        <p style={{ margin: "0 0 6px" }}>I hereby declare that:</p>
+        <p style={{ margin: "0 0 6px" }}>{consent.intro}</p>
         <ol style={{ margin: 0, paddingLeft: 18 }}>
           {consent.points.map((point) => (
             <li key={point} style={{ marginBottom: 4 }}>
@@ -37,12 +63,12 @@ export function ConsentBox({
           ))}
         </ol>
       </div>
-      <label style={{ display: "flex", gap: 8, fontSize: 12.5, marginTop: 8, alignItems: "flex-start" }}>
+      <label lang={language} style={{ display: "flex", gap: 8, fontSize: 12.5, marginTop: 8, alignItems: "flex-start" }}>
         <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
         <span>
-          The patient has read (or had read to them) and agrees to the consent above, and has been told about the{" "}
+          {consent.agreePrefix}{" "}
           <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer">
-            Terms and Data Privacy Policy (ABDM Health Data Management Policy)
+            {consent.privacyLinkText}
           </a>
           .
         </span>

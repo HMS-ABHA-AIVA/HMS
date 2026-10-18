@@ -83,6 +83,11 @@ abdmHttp.interceptors.response.use((response) => {
     // 401 from ABDM = our gateway access token is missing/expired. The frontend refreshes the ABDM
     // session and retries when it sees this exact message. X-token callers translate it themselves.
     if (status === 401) {
+      // ABDM also answers 401 for account-level problems (e.g. ABDM-1100 "too many failed attempts",
+      // ABDM-1017 "invalid transaction"). Those carry an ABDM error code and a reason; a dead gateway token does not.
+      if (typeof data?.error?.code === "string" && data.error.code.startsWith("ABDM-") && message) {
+        return Promise.reject(classifyAbdmClientError(status, data.error.code, message, error.config?.url));
+      }
       return Promise.reject(new ApiError(401, "ABDM authentication required", [], "ABDM_AUTH_REQUIRED"));
     }
 
@@ -92,17 +97,21 @@ abdmHttp.interceptors.response.use((response) => {
 
     // Every other 4xx carries ABDM/UIDAI's own explanation (wrong Aadhaar, wrong OTP, no ABHA for this
     // number, cool-down ...). Classify it into a specific, staff-readable error instead of masking it.
-    return Promise.reject(classifyAbdmClientError(status ?? 400, data?.error?.code, message));
+    return Promise.reject(classifyAbdmClientError(status ?? 400, data?.error?.code, message, error.config?.url));
   },
 );
 
 // Turns an ABDM 4xx into an ApiError with a specific message and a stable `code`.
 // ABDM's wording is inconsistent, so known cases are matched on code first, then on text.
 // Anything unrecognised keeps ABDM's own message rather than a generic one.
-function classifyAbdmClientError(status: number, abdmCode: string | undefined, message: string | undefined): ApiError {
+function classifyAbdmClientError(status: number, abdmCode: string | undefined, message: string | undefined, url?: string): ApiError {
   const text = message ?? "";
   const fail = (httpStatus: number, code: string, friendly: string) => new ApiError(httpStatus, friendly, [], code);
 
+  // Creating an ABHA address that someone already holds.
+  if (url?.includes("/enrol/abha-address") && /(exist|already|taken|in use|not available|unavailable|duplicate)/i.test(text)) {
+    return fail(409, "ABHA_ADDRESS_TAKEN", "ABHA Address already exists. Please choose a different address.");
+  }
   if (status === 429) {
     return fail(429, "OTP_COOLDOWN", "An OTP was requested a moment ago. Wait about 30 seconds before requesting another.");
   }
@@ -620,4 +629,64 @@ export const verifyAbhaNumberOtp = async ({accessToken, txnId, encryptedOtp, cha
     expiresIn?: number;
     accounts?: { ABHANumber: string; [key: string]: unknown }[];
   };
+};
+
+// ---------------------------------------------------------------------------
+// Update the ABHA's mobile number or email (OTP to the NEW value, then verify). Needs the X-token.
+// ---------------------------------------------------------------------------
+
+export type ProfileContactType = "mobile" | "email";
+
+const contactScope = (type: ProfileContactType) => ["abha-profile", type === "mobile" ? "mobile-verify" : "email-verify"];
+
+export const requestProfileContactOtp = async ({accessToken, xToken, encryptedValue, type, environment}: {
+  accessToken: string; xToken: string; encryptedValue: string; type: ProfileContactType; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/profile/account/request/otp`,
+    {
+      scope: contactScope(type),
+      loginHint: type,
+      loginId: encryptedValue,
+      otpSystem: "abdm",
+    },
+    { headers: { ...baseHeaders(accessToken), "X-token": `Bearer ${xToken}` } },
+  );
+
+  return response.data as { txnId: string; message: string };
+};
+
+export const verifyProfileContactOtp = async ({accessToken, xToken, txnId, encryptedOtp, type, environment}: {
+  accessToken: string; xToken: string; txnId: string; encryptedOtp: string; type: ProfileContactType; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/profile/account/verify`,
+    {
+      scope: contactScope(type),
+      authData: {
+        authMethods: ["otp"],
+        otp: { txnId, otpValue: encryptedOtp },
+      },
+    },
+    { headers: { ...baseHeaders(accessToken), "X-token": `Bearer ${xToken}` } },
+  );
+
+  return response.data as { txnId?: string; authResult?: string; message?: string };
+};
+
+// Ends the patient's ABHA session at ABDM (called best-effort when staff sign out).
+export const abhaLogout = async ({accessToken, xToken, environment}: {accessToken: string; xToken: string; environment: AbdmEnvironment}) => {
+  const response = await abdmHttp.get(
+    `${getBaseUrl(environment)}/v3/profile/account/request/logout`,
+    {
+      headers: {
+        "REQUEST-ID": randomUUID(),
+        TIMESTAMP: new Date().toISOString(),
+        Authorization: `Bearer ${accessToken}`,
+        "X-token": `Bearer ${xToken}`,
+      },
+    },
+  );
+
+  return response.data;
 };

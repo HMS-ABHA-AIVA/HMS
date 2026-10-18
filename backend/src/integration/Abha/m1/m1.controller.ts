@@ -2,8 +2,8 @@ import type { Response, NextFunction } from "express";
 import type { ZodType } from "zod";
 import { ApiError } from "../../../common/errors/appError.js";
 import type { userAuthRequest } from "../../../common/middlewares/verifyUserJwt.js"
-import { abdmTokenRetrievalSchema, aadhaarOtpRequestSchema, aadharOtpVerifySchema, existingAbhaAadhaarOtpRequestSchema, existingAbhaAadhaarOtpVerifySchema, existingAbhaMobileOtpRequestSchema, existingAbhaMobileOtpVerifySchema, verifyExistingAbhaMobileUserSchema,getAbhaProfileSchema, enrolMobileRequestSchema, enrolMobileVerifySchema, abhaAddressSuggestionsQuerySchema, createAbhaAddressSchema, abhaNumberOtpRequestSchema, abhaNumberOtpVerifySchema } from "../../../common/validators/m1.validator.js"
-import { abdmTokenRetrievalService, aadhaarOtpRequestService, aadhaarOtpVerifyService, requestExistingAbhaAadhaarOtpService, verifyExistingAbhaAadhaarOtpService, requestExistingAbhaMobileOtpService, verifyExistingAbhaMobileOtpService, verifyExistingAbhaMobileUserService,generateAbhaQrService, getAbhaProfileService, getAbhaCardService, requestEnrolMobileVerificationService, verifyEnrolMobileService, getAbhaAddressSuggestionsService, createAbhaAddressService, requestAbhaNumberOtpService, verifyAbhaNumberOtpService } from "./m1.service.js";
+import { abdmTokenRetrievalSchema, aadhaarOtpRequestSchema, aadharOtpVerifySchema, existingAbhaAadhaarOtpRequestSchema, existingAbhaAadhaarOtpVerifySchema, existingAbhaMobileOtpRequestSchema, existingAbhaMobileOtpVerifySchema, verifyExistingAbhaMobileUserSchema,getAbhaProfileSchema, enrolMobileRequestSchema, enrolMobileVerifySchema, abhaAddressSuggestionsQuerySchema, createAbhaAddressSchema, abhaNumberOtpRequestSchema, abhaNumberOtpVerifySchema, profileContactRequestSchema, profileContactVerifySchema } from "../../../common/validators/m1.validator.js"
+import { abdmTokenRetrievalService, aadhaarOtpRequestService, aadhaarOtpVerifyService, requestExistingAbhaAadhaarOtpService, verifyExistingAbhaAadhaarOtpService, requestExistingAbhaMobileOtpService, verifyExistingAbhaMobileOtpService, verifyExistingAbhaMobileUserService,generateAbhaQrService, getAbhaProfileService, getAbhaCardService, requestEnrolMobileVerificationService, verifyEnrolMobileService, getAbhaAddressSuggestionsService, createAbhaAddressService, requestAbhaNumberOtpService, verifyAbhaNumberOtpService, requestProfileContactUpdateService, verifyProfileContactUpdateService } from "./m1.service.js";
 import { prisma } from "../../../config/db.js";
 import { readSafeCookie, setAbdmSessionCookies, setAbhaSessionCookies, setTTokenCookie, getAbhaSessionToken } from "../../../common/utils/abdmCookies.js";
 
@@ -57,10 +57,10 @@ export const abdmTokenRetrievalRequest = async (req: userAuthRequest, res: Respo
 export const aadhaarOtpRequestController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = requireUser(req);
-    const { environment, patientId, aadhaar } = parseOrThrow(aadhaarOtpRequestSchema, req.body);
+    const { environment, patientId, aadhaar, consentLanguage } = parseOrThrow(aadhaarOtpRequestSchema, req.body);
     const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const resultData = await aadhaarOtpRequestService(patientId, user.facilityId, abdmAccessToken, environment, aadhaar);
+    const resultData = await aadhaarOtpRequestService(patientId, user.facilityId, abdmAccessToken, environment, aadhaar, consentLanguage);
 
     res.status(200).json({
       status: "success",
@@ -110,10 +110,10 @@ export const aadhaarOtpVerifyController = async (req: userAuthRequest, res: Resp
 export const requestExistingAbhaAadhaarOtpController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = requireUser(req);
-    const { patientId, aadhaar, environment } = parseOrThrow(existingAbhaAadhaarOtpRequestSchema, req.body);
+    const { patientId, aadhaar, environment, consentLanguage } = parseOrThrow(existingAbhaAadhaarOtpRequestSchema, req.body);
     const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const resultData = await requestExistingAbhaAadhaarOtpService(patientId, user.facilityId, abdmAccessToken, environment, aadhaar);
+    const resultData = await requestExistingAbhaAadhaarOtpService(patientId, user.facilityId, abdmAccessToken, environment, aadhaar, consentLanguage);
 
     return res.status(200).json({
       status: "success",
@@ -146,6 +146,7 @@ export const verifyExistingAbhaAadhaarOtpController = async (req: userAuthReques
         transactionId: resultData.transactionId,
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
+        mobileMatchesRecord: resultData.mobileMatchesRecord,
       },
     });
   } catch (error) {
@@ -158,10 +159,10 @@ export const verifyExistingAbhaAadhaarOtpController = async (req: userAuthReques
 export const requestExistingAbhaMobileOtpController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = requireUser(req);
-    const { patientId, mobile, environment } = parseOrThrow(existingAbhaMobileOtpRequestSchema, req.body);
+    const { patientId, mobile, environment, consentLanguage } = parseOrThrow(existingAbhaMobileOtpRequestSchema, req.body);
     const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const resultData = await requestExistingAbhaMobileOtpService(patientId, user.facilityId, abdmAccessToken, environment, mobile);
+    const resultData = await requestExistingAbhaMobileOtpService(patientId, user.facilityId, abdmAccessToken, environment, mobile, consentLanguage);
 
     return res.status(200).json({
       status: "success",
@@ -226,6 +227,7 @@ export const verifyExistingAbhaMobileUserController = async (req: userAuthReques
         transactionId: resultData.transactionId,
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
+        mobileMatchesRecord: resultData.mobileMatchesRecord,
         name: resultData.name,
         gender: resultData.gender,
         dob: resultData.dob,
@@ -364,10 +366,10 @@ export const createAbhaAddressController = async (req: userAuthRequest, res: Res
 export const abhaNumberOtpRequestController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = requireUser(req);
-    const { patientId, abhaNumber, channel, environment } = parseOrThrow(abhaNumberOtpRequestSchema, req.body);
+    const { patientId, abhaNumber, channel, environment, consentLanguage } = parseOrThrow(abhaNumberOtpRequestSchema, req.body);
     const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const resultData = await requestAbhaNumberOtpService(patientId, user.facilityId, abdmAccessToken, environment, abhaNumber, channel);
+    const resultData = await requestAbhaNumberOtpService(patientId, user.facilityId, abdmAccessToken, environment, abhaNumber, channel, consentLanguage);
 
     return res.status(200).json({
       status: "success",
@@ -397,6 +399,7 @@ export const abhaNumberOtpVerifyController = async (req: userAuthRequest, res: R
         transactionId: resultData.transactionId,
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
+        mobileMatchesRecord: resultData.mobileMatchesRecord,
       },
     });
   } catch (error) {
@@ -445,6 +448,48 @@ export const listAbhaAuditController = async (req: userAuthRequest, res: Respons
       status: "success",
       message: "ABHA audit trail retrieved",
       data: entries,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// update the ABHA's mobile number / email (OTP to the new value)
+// ---------------------------------------------------------------------------
+
+export const profileContactRequestController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { patientId, type, value, environment } = parseOrThrow(profileContactRequestSchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+    const xToken = getAbhaSessionToken(req, patientId);
+
+    const resultData = await requestProfileContactUpdateService(patientId, user.facilityId, abdmAccessToken, xToken, environment, type, value);
+
+    return res.status(200).json({
+      status: "success",
+      message: resultData.message,
+      data: { transactionId: resultData.transactionId },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const profileContactVerifyController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = requireUser(req);
+    const { patientId, transactionId, otp, type, environment } = parseOrThrow(profileContactVerifySchema, req.body);
+    const abdmAccessToken = requireAbdmAccessToken(req);
+    const xToken = getAbhaSessionToken(req, patientId);
+
+    const resultData = await verifyProfileContactUpdateService(patientId, transactionId, user.facilityId, abdmAccessToken, xToken, environment, otp, type);
+
+    return res.status(200).json({
+      status: "success",
+      message: resultData.message,
+      data: { patientId },
     });
   } catch (error) {
     next(error);

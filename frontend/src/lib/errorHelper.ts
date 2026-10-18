@@ -30,6 +30,7 @@ const CODE_TITLES: Record<string, { tone: MappedErrorState["tone"]; title: strin
   ABDM_UNAVAILABLE: { tone: "error", title: "ABDM is temporarily unavailable" },
   ABDM_AUTH_REJECTED: { tone: "error", title: "ABDM rejected the hospital's credentials" },
   ABDM_NOT_FOUND: { tone: "error", title: "ABDM could not find this record" },
+  ABHA_ADDRESS_TAKEN: { tone: "error", title: "ABHA address already exists" },
   ABDM_CONFLICT: { tone: "error", title: "ABDM reports a conflict" },
   ABDM_REJECTED: { tone: "error", title: "ABDM could not accept this" },
   QR_FORMAT: { tone: "error", title: "QR code could not be read" },

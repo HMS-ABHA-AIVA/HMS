@@ -1,9 +1,12 @@
 // Every backend route the frontend calls, in one place. Paths follow the backend
 // README's API table; request/response shapes follow its routes and zod validators.
 // If the backend changes, this is the file to update.
-import { get, getBlob, post } from '@/api/client';
+import { get, getBlob, patch, post } from '@/api/client';
 
 export type AbdmEnvironment = 'SANDBOX' | 'PRODUCTION';
+
+/** Language the consent text was shown in; recorded with the transaction. */
+export type ConsentLanguageCode = 'en' | 'hi';
 
 /** Facility routes answer `success: true`, the ABHA routes answer `status: 'success'`. */
 interface Envelope<T> {
@@ -44,7 +47,8 @@ export interface StaffInfo {
 export const loginStaff = (body: { email: string; password: string }) =>
   post<Envelope<StaffInfo>>('/user/admin/login', body);
 
-export const logoutStaff = () => post<Envelope<never>>('/user/admin/logout');
+// The environment tells the backend which ABDM to end the patient's ABHA session on.
+export const logoutStaff = (environment?: AbdmEnvironment) => post<Envelope<never>>('/user/admin/logout', { environment });
 
 // ---- Patients (user JWT) -----------------------------------------------------
 
@@ -55,6 +59,11 @@ export interface BackendPatient {
   email: string | null;
   /** YYYY-MM-DD; checked against the ABHA before linking. Older patients may not have one. */
   dateOfBirth?: string | null;
+  /** M / F / O, filled from the ABHA profile when one is linked. Fixed once verified. */
+  gender?: string | null;
+  address?: string | null;
+  stateName?: string | null;
+  districtName?: string | null;
   facilityId: string;
   createdAt: string;
 }
@@ -66,6 +75,12 @@ export const createPatient = (body: { name: string; phone: string; email?: strin
 export interface BackendPatientWithAbha extends BackendPatient {
   abha?: { abhaNumber: string; abhaAddress?: string | null } | null;
 }
+
+/** Staff may edit these only. Name, date of birth and gender are fixed once verified against an ABHA. */
+export const updatePatient = (
+  patientId: string,
+  body: { phone?: string; email?: string; address?: string; stateName?: string; districtName?: string },
+) => patch<Envelope<BackendPatientWithAbha>>(`/patient/${patientId}`, body);
 
 export const listPatients = () => get<Envelope<BackendPatientWithAbha[]>>('/patient');
 
@@ -88,12 +103,14 @@ export const listPatientTransactions = (patientId: string) =>
 export const retrieveAbdmToken = (environment: AbdmEnvironment) => post<{ message: string }>('/abha/retrieve', { environment });
 
 // `consent: true` = the patient accepted the consent text shown; the backend refuses to send an OTP without it.
-export const requestAbhaCreateOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment; consent: true }) =>
+export const requestAbhaCreateOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment; consent: true; consentLanguage?: ConsentLanguageCode }) =>
   post<Envelope<{ txnId: string; transactionId: string }>>('/abha/create/aadhar/request', body);
 
 export interface AbhaProfile {
   abhaNumber: string;
   abhaAddress: string | null;
+  /** false when the mobile held on the ABHA differs from the hospital record; absent when ABDM sent none. */
+  mobileMatchesRecord?: boolean;
 }
 
 export const verifyAbhaCreateOtp = (body: {
@@ -130,7 +147,7 @@ export const getAbhaAddressSuggestions = (transactionId: string, environment: Ab
 export const createAbhaAddress = (body: { transactionId: string; abhaAddress: string; environment: AbdmEnvironment }) =>
   post<Envelope<{ abhaAddress: string }>>('/abha/create/address', body);
 
-export const requestAbhaLinkOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment; consent: true }) =>
+export const requestAbhaLinkOtp = (body: { patientId: string; aadhaar: string; environment: AbdmEnvironment; consent: true; consentLanguage?: ConsentLanguageCode }) =>
   post<Envelope<{ transactionId: string }>>('/abha/verify/aadhar/request', body);
 
 export const confirmAbhaLink = (body: { transactionId: string; otp: string; environment: AbdmEnvironment }) =>
@@ -145,6 +162,7 @@ export const requestAbhaNumberOtp = (body: {
   channel: AbhaLoginChannel;
   environment: AbdmEnvironment;
   consent: true;
+  consentLanguage?: ConsentLanguageCode;
 }) => post<Envelope<{ transactionId: string }>>('/abha/verify/number/request', body);
 
 export const confirmAbhaNumberOtp = (body: {
@@ -155,7 +173,7 @@ export const confirmAbhaNumberOtp = (body: {
 }) => post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/number/confirm', body);
 
 // Mobile verification flow (Step 1, Step 2, Step 3)
-export const requestAbhaMobileOtp = (body: { patientId: string; mobile: string; environment: AbdmEnvironment; consent: true }) =>
+export const requestAbhaMobileOtp = (body: { patientId: string; mobile: string; environment: AbdmEnvironment; consent: true; consentLanguage?: ConsentLanguageCode }) =>
   post<Envelope<{ transactionId: string; txnId: string }>>('/abha/verify/mobile/request', body);
 
 export interface AbhaAccountItem {
@@ -180,6 +198,7 @@ export const verifyAbhaMobileUser = (body: { abhaNumber: string; transactionId: 
     gender?: string;
     dob?: string;
     kycVerified?: boolean;
+    mobileMatchesRecord?: boolean;
   }>>('/abha/verify/mobile/user', body);
 
 // ABHA profile and live QR code
@@ -204,3 +223,19 @@ export const getAbhaQrCodeBlob = (patientId: string, environment: AbdmEnvironmen
 
 export const getAbhaCardBlob = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
   getBlob(`/abha/profile/card?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);
+
+// ---- Update the mobile number / email held on the ABHA (OTP goes to the new value) --------------------------------
+
+export const requestAbhaContactUpdate = (
+  body:
+    | { patientId: string; type: 'mobile'; value: string; environment: AbdmEnvironment }
+    | { patientId: string; type: 'email'; value: string; environment: AbdmEnvironment },
+) => post<Envelope<{ transactionId: string }>>('/abha/profile/contact/request', body);
+
+export const verifyAbhaContactUpdate = (body: {
+  patientId: string;
+  transactionId: string;
+  otp: string;
+  type: 'mobile' | 'email';
+  environment: AbdmEnvironment;
+}) => post<Envelope<{ patientId: string }>>('/abha/profile/contact/verify', body);

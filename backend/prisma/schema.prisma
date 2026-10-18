@@ -102,6 +102,12 @@ model Patient {
     // Compared with the ABHA profile before an ABHA can be linked (see abhaMatch.ts)
     dateOfBirth DateTime? @db.Date
 
+    // Filled from the ABHA profile when an ABHA is linked (only where empty); editable by staff except name/DOB/gender
+    gender       String?
+    address      String?
+    stateName    String?
+    districtName String?
+
     facilityId String
 
     facility Facility @relation(fields: [facilityId], references: [id])
@@ -150,6 +156,9 @@ model AbhaTransaction {
   consentVersion    String?
   consentAcceptedAt DateTime?
 
+  // Language the consent was shown in ("en" or "hi")
+  consentLanguage   String?
+
   // Enrolment follow-ups (mobile verification, ABHA address) continue on ABDM's enrolment txnId
   enrolTxnId        String?
   mobileOtpTxnId    String?
@@ -168,6 +177,7 @@ model AbhaTransaction {
 enum AbhaTransactionPurpose {
   ENROLLMENT
   VERIFICATION
+  PROFILE_UPDATE
 }
 
 enum AbhaTransactionStatus {

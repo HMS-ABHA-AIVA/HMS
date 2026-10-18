@@ -3,7 +3,8 @@ import type { userAuthRequest } from "../../../common/middlewares/verifyUserJwt.
 import { loginAdminSchema } from "../../../common/validators/admin.validator.js"
 import { ApiError } from "../../../common/errors/appError.js";
 import { loginAdminService ,logoutAdminService } from "./admin.service.js";
-import { clearAbdmCookies } from "../../../common/utils/abdmCookies.js";
+import { clearAbdmCookies, readSafeCookie } from "../../../common/utils/abdmCookies.js";
+import { endAbhaSessionService } from "../../../integration/Abha/m1/m1.service.js";
 import { logSecurityEvent } from "../../../common/utils/securityLog.js";
 
 
@@ -64,6 +65,14 @@ export const adminLogout = async (req: userAuthRequest,res: Response,next: NextF
             throw new ApiError(401,"unauthorized");
         }
         await logoutAdminService(req.user.id);
+
+        // End the patient's ABHA session at ABDM too (best effort; never blocks the sign-out).
+        const abdmAccessToken = readSafeCookie(req.cookies?.abdmAccessToken);
+        const xToken = readSafeCookie(req.cookies?.abhaXToken);
+        if (abdmAccessToken && xToken) {
+            const requested = (req.body as { environment?: unknown } | undefined)?.environment;
+            endAbhaSessionService(abdmAccessToken, xToken, requested === "PRODUCTION" ? "PRODUCTION" : "SANDBOX");
+        }
 
         clearAbdmCookies(res);
         logSecurityEvent("LOGOUT", req, { actor: "staff" });

@@ -32,3 +32,16 @@ export const listPatientsQuerySchema = z.object({
     limit: z.coerce.number().int().min(1, "limit must be at least 1").max(1000, "limit can be at most 1000").default(500),
     page: z.coerce.number().int().min(1, "page must be at least 1").default(1),
 });
+
+// What staff may edit on a patient. Name, date of birth and gender are deliberately absent (and .strict() rejects
+// them): once verified against an ABHA they are fixed. Empty string clears an optional field.
+const optionalText = (max: number, label: string) =>
+    z.string().trim().max(max, `${label} is too long`).regex(/^[^\u0000-\u001f\u007f]*$/, `${label} contains characters that are not allowed`);
+
+export const updatePatientSchema = z.object({
+    phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits").optional(),
+    email: z.union([z.email("Invalid email address").max(254, "Email address is too long"), z.literal("")]).optional(),
+    address: optionalText(300, "Address").optional(),
+    stateName: optionalText(80, "State").optional(),
+    districtName: optionalText(80, "District").optional(),
+}).strict();

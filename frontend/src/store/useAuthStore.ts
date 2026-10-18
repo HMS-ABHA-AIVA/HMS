@@ -41,7 +41,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signOut: async () => {
     const { session } = get();
     try {
-      if (session?.kind === 'staff') await logoutStaff();
+      if (session?.kind === 'staff') await logoutStaff(get().environment);
       if (session?.kind === 'facility') await logoutFacility();
     } catch {
       // the cookie may already have expired; we are logging out locally regardless

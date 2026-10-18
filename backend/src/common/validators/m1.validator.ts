@@ -2,6 +2,8 @@ import {z} from "zod"
 
 // The patient must have agreed to the consent text shown before any OTP is requested.
 const consent = z.literal(true, "Patient consent is required before an OTP is sent");
+// Language the consent text was shown in (recorded with the transaction).
+const consentLanguage = z.enum(["en", "hi"], "Unsupported consent language").default("en");
 
 export const abdmTokenRetrievalSchema = z.object({
     environment: z.enum(["SANDBOX", "PRODUCTION"]),
@@ -12,6 +14,7 @@ export const aadhaarOtpRequestSchema = z.object({
     patientId: z.uuid(),
     aadhaar: z.string().regex(/^\d{12}$/, "Aadhaar number must be exactly 12 digits"),
     consent,
+    consentLanguage,
 });
 
 export const aadharOtpVerifySchema = z.object({
@@ -27,6 +30,7 @@ export const existingAbhaAadhaarOtpRequestSchema = z.object({
   aadhaar: z.string().regex(/^\d{12}$/,"Aadhaar number must be exactly 12 digits"),
   environment: z.enum(["SANDBOX","PRODUCTION"]),
   consent,
+  consentLanguage,
 });
 
 export const existingAbhaAadhaarOtpVerifySchema = z.object({
@@ -43,6 +47,7 @@ export const existingAbhaMobileOtpRequestSchema = z.object({
 
   environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
   consent,
+  consentLanguage,
 });
 
 export const existingAbhaMobileOtpVerifySchema = z.object({
@@ -105,6 +110,7 @@ export const abhaNumberOtpRequestSchema = z.object({
     channel: loginChannel,
     environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
     consent,
+    consentLanguage,
 });
 
 export const abhaNumberOtpVerifySchema = z.object({
@@ -112,4 +118,23 @@ export const abhaNumberOtpVerifySchema = z.object({
     otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
     channel: loginChannel,
     environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+});
+
+// --- update the ABHA mobile / email ---------------------------------------------------------------------
+
+const contactBase = {
+    patientId: z.uuid("Invalid patient ID"),
+    environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+};
+
+export const profileContactRequestSchema = z.discriminatedUnion("type", [
+    z.object({ ...contactBase, type: z.literal("mobile"), value: z.string().regex(/^\d{10}$/, "Mobile number must be exactly 10 digits") }),
+    z.object({ ...contactBase, type: z.literal("email"), value: z.email("Enter a valid email address").max(254, "Email address is too long") }),
+]);
+
+export const profileContactVerifySchema = z.object({
+    ...contactBase,
+    type: z.enum(["mobile", "email"], "type must be mobile or email"),
+    transactionId: z.uuid("Invalid transaction ID"),
+    otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
 });
