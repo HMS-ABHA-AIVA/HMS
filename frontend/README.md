@@ -40,7 +40,8 @@ There are two kinds of login, and they share one cookie, so only one is active a
 |---|---|---|
 | Sign in | `/login` | Staff, facility owner, register a facility |
 | Facility setup | `/facility-setup` | Facility login only |
-| Patients | `/`, `/registration` | Patient list with ABHA status, search, "Add ABHA" |
+| Dashboard | `/` | Live counts (patients, ABHA linked, shared profiles waiting) and recent ABHA activity |
+| Patients | `/registration` | Patient list with ABHA status, search, "Add ABHA" |
 | Register patient | `/register` | Creates the patient, then creates or links an ABHA |
 | Patient record | `/record/:patientId` | Live ABHA profile, QR, card download, contact update |
 | Shared profiles | `/shared-profiles` | Scan & Share queue and counter QR codes |
@@ -78,7 +79,7 @@ Setup of the public URL and bridge is in the root README.
 src/
   main.tsx, App.tsx         start-up and all routes
   pages/
-    SignIn, FacilitySetup, PatientList, RegisterPatient, PatientRecord, SharedProfiles   connected to the backend
+    SignIn, FacilitySetup, Dashboard, PatientList, RegisterPatient, PatientRecord, SharedProfiles   connected to the backend
     OpdQueue                                                                            demo data
     ErrorStates.tsx         shared stop/error panel
   components/

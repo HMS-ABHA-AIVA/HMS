@@ -423,7 +423,7 @@ export function RegisterPatient() {
       onNavigate={handleNavigate}
       onLogout={signOut}
     >
-      <a className="osh-backlink" style={{ cursor: "pointer" }} onClick={() => navigate("/")}>
+      <a className="osh-backlink" style={{ cursor: "pointer" }} onClick={() => navigate("/registration")}>
         Back to patients
       </a>
       <h1 className="osh-h1">Register a patient</h1>

@@ -241,6 +241,19 @@ export const getAbhaQrCodeBlob = (patientId: string, environment: AbdmEnvironmen
 export const getAbhaCardBlob = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
   getBlob(`/abha/profile/card?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);
 
+// ---- Dashboard counts ----------------------------------------------------------------------------------------
+
+export interface DashboardData {
+  totalPatients: number;
+  abhaLinked: number;
+  withoutAbha: number;
+  registeredToday: number;
+  pendingShares: number;
+  recentActivity: { id: string; action: string; outcome: 'SUCCESS' | 'FAILURE'; errorCode: string | null; createdAt: string }[];
+}
+
+export const getDashboard = () => get<Envelope<DashboardData>>('/dashboard');
+
 // ---- Scan & Share: profiles patients shared by scanning a counter QR code ---------------------------------------
 
 export interface SharedProfile {

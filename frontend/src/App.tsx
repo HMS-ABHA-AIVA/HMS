@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { RequireSession } from "@/components/auth/RequireSession";
 import { SignIn } from "@/pages/SignIn";
 import { FacilitySetup } from "@/pages/FacilitySetup";
+import { Dashboard } from "@/pages/Dashboard";
 import { PatientList } from "@/pages/PatientList";
 import { RegisterPatient } from "@/pages/RegisterPatient";
 import { PatientRecord } from "@/pages/PatientRecord";
@@ -21,7 +22,7 @@ export default function App() {
 
         {/* Staff logins get the hospital screens */}
         <Route element={<RequireSession kind="staff" />}>
-          <Route path="/" element={<PatientList />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/registration" element={<PatientList />} />
           <Route path="/register" element={<RegisterPatient />} />
           <Route path="/shared-profiles" element={<SharedProfiles />} />

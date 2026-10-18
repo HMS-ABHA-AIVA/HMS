@@ -39,6 +39,12 @@ applicable) `data`. Errors contain a message.
 | `GET` | `/api/patient` | Staff/admin | None | Return patients belonging to the authenticated user's facility, including their ABHA record when present.|
 | `GET` | `/api/patient/:patientId/transactions` | Staff/admin | None | Return that patient's ABHA transactions for the authenticated facility, newest first.|
 
+### Dashboard
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/dashboard` | Staff | Counts for the dashboard: patients, with/without an ABHA, registered today (IST), shared profiles waiting, and the last 8 ABHA audit entries (action, outcome, error code; no personal data). |
+
 ### ABHA / ABDM M1
 
 All routes below require staff/admin authentication. `environment` must be `SANDBOX` or `PRODUCTION`.
