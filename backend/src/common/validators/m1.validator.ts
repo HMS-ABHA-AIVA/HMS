@@ -138,3 +138,30 @@ export const profileContactVerifySchema = z.object({
     transactionId: z.uuid("Invalid transaction ID"),
     otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
 });
+
+// --- link an existing ABHA by ABHA address (PHR login) ---------------------------------------------------
+
+// "name", "name@sbx" (sandbox) or "name@abdm" (production): letters, digits, dot, underscore.
+// An e-mail address is not an ABHA address, so a different domain is refused with a pointer to what is expected.
+const abhaAddressForLogin = z
+    .string()
+    .trim()
+    .max(60, "ABHA address is too long")
+    .refine((v) => !v.includes("@") || /@(sbx|abdm)$/i.test(v), "That looks like an email address. An ABHA address ends with @sbx (sandbox) or @abdm (production), for example name@sbx")
+    .refine((v) => /^[A-Za-z0-9._]{3,40}(@(sbx|abdm))?$/i.test(v), "Enter the ABHA address, for example name@sbx");
+
+export const abhaAddressOtpRequestSchema = z.object({
+    patientId: z.uuid("Invalid patient ID"),
+    abhaAddress: abhaAddressForLogin,
+    channel: loginChannel,
+    environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+    consent,
+    consentLanguage,
+});
+
+export const abhaAddressOtpVerifySchema = z.object({
+    transactionId: z.uuid("Invalid transaction ID"),
+    otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
+    channel: loginChannel,
+    environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+});

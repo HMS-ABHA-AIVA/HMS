@@ -3,7 +3,8 @@ import { ApiError } from "../../../common/errors/appError.js";
 import { generateAbdmSessionToken } from "../../../common/client/facility.client.js";
 import { decrypt, encryptWithAbdmPublicKey } from "../../../common/utils/encryption.js";
 import { findAbhaMismatches, parseAbhaDob, type AbhaDemographics } from "../../../common/utils/abhaMatch.js";
-import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, getAbhaCard, requestEnrolMobileOtp, verifyEnrolMobileOtp, getAbhaAddressSuggestions, createAbhaAddress, requestAbhaNumberOtp, verifyAbhaNumberOtp, ABHA_ENROLLMENT_CONSENT, HOSPITAL_LINK_CONSENT, getCmId, requestProfileContactOtp, verifyProfileContactOtp, abhaLogout, type AbhaLoginChannel, type ProfileContactType } from "../../../common/client/abdm.client.js";
+import type { AbhaTokenKind } from "../../../common/utils/abdmCookies.js";
+import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, getAbhaCard, requestEnrolMobileOtp, verifyEnrolMobileOtp, getAbhaAddressSuggestions, createAbhaAddress, requestAbhaNumberOtp, verifyAbhaNumberOtp, ABHA_ENROLLMENT_CONSENT, HOSPITAL_LINK_CONSENT, getCmId, requestProfileContactOtp, verifyProfileContactOtp, abhaLogout, searchAbhaAddress, requestAbhaAddressOtp, verifyAbhaAddressOtp, getPhrProfile, getPhrCard, type AbhaLoginChannel, type ProfileContactType } from "../../../common/client/abdm.client.js";
 
 type Environment = "SANDBOX" | "PRODUCTION";
 
@@ -629,15 +630,42 @@ const requireLinkedAbha = async (patientId: string, facilityId: string) => {
 };
 
 //generate QR code
-export const generateAbhaQrService = async (patientId: string, facilityId: string, abdmAccessToken: string, abhaXToken: string, environment: Environment) => {
+export const generateAbhaQrService = async (patientId: string, facilityId: string, abdmAccessToken: string, abhaXToken: string, environment: Environment, kind: AbhaTokenKind = "abha") => {
   await requireLinkedAbha(patientId, facilityId);
+
+  if (kind === "phr") {
+    throw new ApiError(422, "The QR code is not available after an ABHA-address verification. Verify with the ABHA number, Aadhaar or mobile to see the QR.", [], "QR_NOT_AVAILABLE");
+  }
 
   return generateAbhaQr({ accessToken: abdmAccessToken, xToken: abhaXToken, environment }).catch(asAbhaSessionError);
 };
 
 //GET abha profile
-export const getAbhaProfileService = async (patientId: string, facilityId: string, accessToken: string, xToken: string, environment: Environment) => {
+export const getAbhaProfileService = async (patientId: string, facilityId: string, accessToken: string, xToken: string, environment: Environment, kind: AbhaTokenKind = "abha") => {
   const linked = await requireLinkedAbha(patientId, facilityId);
+
+  if (kind === "phr") {
+    const phr = await getPhrProfile({ accessToken, xToken, environment }).catch(asAbhaSessionError);
+    const phrNumber = fullAbhaNumber(phr.abhaNumber ?? phr.healthIdNumber);
+    const phrAddress = typeof phr.abhaAddress === "string" ? phr.abhaAddress.trim().toLowerCase() : undefined;
+    const sameNumber = phrNumber !== undefined && digitsOnly(phrNumber) === digitsOnly(linked.abhaNumber);
+    const sameAddress = phrAddress !== undefined && linked.abhaAddress !== null && phrAddress === linked.abhaAddress.trim().toLowerCase();
+
+    // Never show a profile that belongs to a different ABHA than the one linked to this patient.
+    if (!sameNumber && !sameAddress) {
+      throw new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");
+    }
+
+    // Same field names the rest of the app reads from /v3/profile/account.
+    return {
+      ...phr,
+      ABHANumber: phrNumber ?? linked.abhaNumber,
+      preferredAbhaAddress: phr.abhaAddress,
+      name: phr.fullName ?? phr.name,
+      dob: phr.dateOfBirth,
+      kycVerified: typeof phr.kycStatus === "string" ? phr.kycStatus.toUpperCase() === "VERIFIED" : undefined,
+    };
+  }
 
   const profile = await getExistingAbhaProfile({ accessToken, xToken, environment }).catch(asAbhaSessionError);
 
@@ -657,8 +685,12 @@ export const getAbhaProfileService = async (patientId: string, facilityId: strin
 // ABHA card
 // ---------------------------------------------------------------------------
 
-export const getAbhaCardService = async (patientId: string, facilityId: string, abdmAccessToken: string, abhaXToken: string, environment: Environment) => {
+export const getAbhaCardService = async (patientId: string, facilityId: string, abdmAccessToken: string, abhaXToken: string, environment: Environment, kind: AbhaTokenKind = "abha") => {
   await requireLinkedAbha(patientId, facilityId);
+
+  if (kind === "phr") {
+    return getPhrCard({ accessToken: abdmAccessToken, xToken: abhaXToken, environment }).catch(asAbhaSessionError);
+  }
 
   return getAbhaCard({ accessToken: abdmAccessToken, xToken: abhaXToken, environment }).catch(asAbhaSessionError);
 };
@@ -858,8 +890,12 @@ export const verifyAbhaNumberOtpService = async (transactionId: string, facility
 // ---------------------------------------------------------------------------
 
 //step 1 - OTP to the NEW mobile / email
-export const requestProfileContactUpdateService = async (patientId: string, facilityId: string, abdmAccessToken: string, xToken: string, environment: Environment, type: ProfileContactType, value: string) => {
+export const requestProfileContactUpdateService = async (patientId: string, facilityId: string, abdmAccessToken: string, xToken: string, environment: Environment, type: ProfileContactType, value: string, kind: AbhaTokenKind = "abha") => {
   await requireLinkedAbha(patientId, facilityId);
+
+  if (kind === "phr") {
+    throw new ApiError(422, "Verify the ABHA with its number, Aadhaar or mobile first: the mobile and email cannot be changed after an ABHA-address verification.", [], "CONTACT_UPDATE_UNAVAILABLE");
+  }
 
   const encryptedValue = await encryptForAbdm(environment, abdmAccessToken, value);
 
@@ -907,4 +943,152 @@ export const verifyProfileContactUpdateService = async (patientId: string, trans
 // Best-effort: end the patient's ABHA session at ABDM when staff sign out. Never blocks or fails the sign-out.
 export const endAbhaSessionService = (abdmAccessToken: string, xToken: string, environment: Environment) => {
   void abhaLogout({ accessToken: abdmAccessToken, xToken, environment }).catch(() => undefined);
+};
+
+// ---------------------------------------------------------------------------
+// verification (link existing ABHA) - ABHA address (PHR login), OTP via Aadhaar or via the ABHA's mobile
+// ---------------------------------------------------------------------------
+
+// A bare name gets the environment's default domain: "ramesh.gupta" -> "ramesh.gupta@sbx" (sandbox) / "@abdm".
+// ABDM only accepts the address in lower case ("name@SBX" is answered "Invalid ABHA Address").
+const withAbhaAddressDomain = (value: string, environment: Environment) => {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.includes("@") ? trimmed : `${trimmed}@${getCmId(environment)}`;
+};
+
+// A complete ABHA number, hyphenated; undefined when ABDM sent it masked (e.g. "91-****-****-2435") or not at all.
+const fullAbhaNumber = (value: unknown): string | undefined => {
+  if (typeof value !== "string" || value.includes("*")) return undefined;
+  const digits = digitsOnly(value);
+  return digits.length === 14 ? formatAbhaNumber(digits) : undefined;
+};
+
+export const requestAbhaAddressOtpService = async (patientId: string, facilityId: string, abdmAccessToken: string, environment: Environment, abhaAddress: string, channel: AbhaLoginChannel, consentLanguage = "en") => {
+  const patient = await findPatientInFacility(patientId, facilityId);
+  const address = withAbhaAddressDomain(abhaAddress, environment);
+
+  // Find out which OTP methods this address supports before sending anything. The holder's name and number in the
+  // reply are not passed on: nobody has proved who is at the desk yet.
+  const found = await searchAbhaAddress({ accessToken: abdmAccessToken, abhaAddress: address, environment });
+
+  if (found.status && found.status !== "ACTIVE") {
+    throw new ApiError(422, "This ABHA address is not active, so it cannot be used.", [], "ACCOUNT_INACTIVE");
+  }
+
+  const needed = channel === "aadhaar" ? "AADHAAR_OTP" : "MOBILE_OTP";
+  const methods = (found.authMethods ?? []).map((m) => String(m).toUpperCase());
+
+  if ((found.blockedAuthMethods ?? []).map((m) => String(m).toUpperCase()).includes(needed)) {
+    throw new ApiError(429, "OTP by this method is blocked for this ABHA address for now. Try the other option, or try again later.", [], "TOO_MANY_ATTEMPTS");
+  }
+  if (methods.length > 0 && !methods.includes(needed)) {
+    throw new ApiError(
+      422,
+      `This ABHA address cannot receive an OTP by ${channel === "aadhaar" ? "the Aadhaar-linked mobile" : "the ABHA mobile"}. Try the other option.`,
+      [],
+      "OTP_CHANNEL_UNAVAILABLE",
+    );
+  }
+
+  const encryptedAddress = await encryptForAbdm(environment, abdmAccessToken, address);
+
+  const abdmResponse = await requestAbhaAddressOtp({ accessToken: abdmAccessToken, encryptedAddress, channel, environment });
+
+  if (!abdmResponse.txnId) {
+    throw new ApiError(502, "ABDM did not return a transaction ID");
+  }
+
+  const transaction = await prisma.abhaTransaction.create({
+    data: {
+      txnId: abdmResponse.txnId,
+      patientId: patient.id,
+      facilityId,
+      purpose: "VERIFICATION",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + OTP_VALIDITY_MS),
+      consentCode: HOSPITAL_LINK_CONSENT.code,
+      consentVersion: HOSPITAL_LINK_CONSENT.version,
+      consentAcceptedAt: new Date(),
+      consentLanguage,
+    },
+  });
+
+  return { transactionId: transaction.id, message: abdmResponse.message };
+};
+
+export const verifyAbhaAddressOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string, channel: AbhaLoginChannel) => {
+  const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
+
+  const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
+
+  const abdmResponse = await verifyAbhaAddressOtp({ accessToken: abdmAccessToken, txnId: transaction.txnId, encryptedOtp, channel, environment });
+
+  if (abdmResponse.authResult !== "success") {
+    const reason = abdmResponse.message ?? "";
+    if (/expired/i.test(reason)) {
+      throw new ApiError(400, "This OTP is no longer valid. Request a new OTP and try again.", [], "OTP_EXPIRED");
+    }
+    throw new ApiError(422, reason || "The OTP could not be verified. Check it and try again.", [], "OTP_INVALID");
+  }
+
+  const users = abdmResponse.users ?? [];
+  if (users.length !== 1) {
+    throw new ApiError(409, "ABDM did not return exactly one ABHA for this address, so nothing was linked.", [], "MULTIPLE_ACCOUNTS");
+  }
+  const user = users[0]!;
+
+  if (user.status && String(user.status).toUpperCase() !== "ACTIVE") {
+    throw new ApiError(422, "This ABHA is not active, so it cannot be linked.", [], "ACCOUNT_INACTIVE");
+  }
+
+  const xToken = abdmResponse.tokens?.token ?? abdmResponse.token;
+  if (!xToken) {
+    throw new ApiError(502, "ABDM verified the OTP but returned no session token.");
+  }
+  const expiresIn = abdmResponse.tokens?.expiresIn ?? abdmResponse.expiresIn;
+
+  const address = typeof user.abhaAddress === "string" && user.abhaAddress.trim() ? user.abhaAddress.trim() : undefined;
+  if (!address) {
+    throw new ApiError(502, "ABDM did not return the verified ABHA address.");
+  }
+
+  // The login reply may hold the ABHA number masked. Take it in full from the verified user, the PHR profile, or
+  // (as a last resort) the address search, so the patient is linked by the same number as every other flow.
+  let abhaNumber = fullAbhaNumber(user.abhaNumber);
+  if (!abhaNumber) {
+    const profile = await getPhrProfile({ accessToken: abdmAccessToken, xToken, environment }).catch(asAbhaSessionError);
+    abhaNumber = fullAbhaNumber(profile.abhaNumber ?? profile.healthIdNumber);
+  }
+  if (!abhaNumber) {
+    const found = await searchAbhaAddress({ accessToken: abdmAccessToken, abhaAddress: address, environment });
+    abhaNumber = fullAbhaNumber(found.healthIdNumber);
+  }
+  if (!abhaNumber) {
+    throw new ApiError(502, "ABDM did not return the full ABHA number for this address. Link with the ABHA number, Aadhaar or mobile instead.", [], "ABHA_NUMBER_UNAVAILABLE");
+  }
+
+  const demographics: AbhaDemographics = {
+    name: user.fullName ?? user.name,
+    dob: user.dateOfBirth ?? user.dob,
+    gender: user.gender,
+    mobile: user.mobile,
+    address: user.address,
+    stateName: user.stateName,
+    districtName: user.districtName,
+  };
+
+  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, address, demographics);
+
+  await setTransactionStatus(transaction.id, "COMPLETED");
+
+  return {
+    patientId: transaction.patientId,
+    transactionId: transaction.id,
+    message: abdmResponse.message,
+    abhaNumber: abhaPatient.abhaNumber,
+    abhaAddress: abhaPatient.abhaAddress,
+    mobileMatchesRecord: abhaPatient.mobileMatchesRecord,
+    token: xToken,
+    expiresIn,
+  };
 };

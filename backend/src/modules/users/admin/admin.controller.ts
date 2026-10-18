@@ -69,7 +69,8 @@ export const adminLogout = async (req: userAuthRequest,res: Response,next: NextF
         // End the patient's ABHA session at ABDM too (best effort; never blocks the sign-out).
         const abdmAccessToken = readSafeCookie(req.cookies?.abdmAccessToken);
         const xToken = readSafeCookie(req.cookies?.abhaXToken);
-        if (abdmAccessToken && xToken) {
+        // (A PHR token from an ABHA-address verification has no profile session to end.)
+        if (abdmAccessToken && xToken && req.signedCookies?.abhaXKind !== "phr") {
             const requested = (req.body as { environment?: unknown } | undefined)?.environment;
             endAbhaSessionService(abdmAccessToken, xToken, requested === "PRODUCTION" ? "PRODUCTION" : "SANDBOX");
         }

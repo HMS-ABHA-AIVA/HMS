@@ -172,6 +172,23 @@ export const confirmAbhaNumberOtp = (body: {
   environment: AbdmEnvironment;
 }) => post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/number/confirm', body);
 
+// ABHA address flow (PHR login): same two OTP channels as the ABHA number flow
+export const requestAbhaAddressOtp = (body: {
+  patientId: string;
+  abhaAddress: string;
+  channel: AbhaLoginChannel;
+  environment: AbdmEnvironment;
+  consent: true;
+  consentLanguage?: ConsentLanguageCode;
+}) => post<Envelope<{ transactionId: string }>>('/abha/verify/address/request', body);
+
+export const confirmAbhaAddressOtp = (body: {
+  transactionId: string;
+  otp: string;
+  channel: AbhaLoginChannel;
+  environment: AbdmEnvironment;
+}) => post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/address/confirm', body);
+
 // Mobile verification flow (Step 1, Step 2, Step 3)
 export const requestAbhaMobileOtp = (body: { patientId: string; mobile: string; environment: AbdmEnvironment; consent: true; consentLanguage?: ConsentLanguageCode }) =>
   post<Envelope<{ transactionId: string; txnId: string }>>('/abha/verify/mobile/request', body);

@@ -38,9 +38,13 @@ export const setAbdmSessionCookies = (
 
 // The ABHA X-token is bound to one patient with a *signed* cookie so a record page can never
 // show another patient's ABHA profile/QR. Signing uses cookie-parser's secret (see app.ts).
-export const setAbhaSessionCookies = (res: Response, xToken: string, patientId: string, expiresIn?: unknown) => {
+export type AbhaTokenKind = "abha" | "phr";
+
+export const setAbhaSessionCookies = (res: Response, xToken: string, patientId: string, expiresIn?: unknown, kind: AbhaTokenKind = "abha") => {
   const maxAge = toMaxAgeMs(expiresIn, 1800);
   res.cookie("abhaXToken", xToken, { ...baseOptions(), maxAge });
+  // An ABHA-address login yields a PHR token, which only works on the PHR profile/card calls.
+  res.cookie("abhaXKind", kind, { ...baseOptions(), maxAge, signed: true });
   res.cookie("abhaXPatientId", patientId, { ...baseOptions(), maxAge, signed: true });
 };
 
@@ -58,7 +62,9 @@ export const getAbhaSessionToken = (req: Request, patientId: string): string => 
   return xToken;
 };
 
-const ABDM_COOKIES = ["abdmAccessToken", "abdmRefreshToken", "abhaXToken", "abhaXPatientId", "t_token"];
+export const getAbhaSessionKind = (req: Request): AbhaTokenKind => (req.signedCookies?.abhaXKind === "phr" ? "phr" : "abha");
+
+const ABDM_COOKIES = ["abdmAccessToken", "abdmRefreshToken", "abhaXToken", "abhaXPatientId", "abhaXKind", "t_token"];
 
 /** Drop every ABDM-related cookie (on login/logout) so one user's ABDM session never leaks to the next. */
 export const clearAbdmCookies = (res: Response) => {

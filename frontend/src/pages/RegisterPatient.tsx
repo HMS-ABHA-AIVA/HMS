@@ -14,6 +14,8 @@ import {
   verifyAbhaMobileUser,
   requestAbhaNumberOtp,
   confirmAbhaNumberOtp,
+  requestAbhaAddressOtp,
+  confirmAbhaAddressOtp,
   type AbhaAccountItem,
   type AbhaLoginChannel,
 } from "@/api/endpoints";
@@ -30,7 +32,7 @@ import { OTP_RESEND_SECONDS, MAX_OTP_RESENDS } from "@/lib/abhaRules";
 
 // 6 = optional follow-ups after creating an ABHA (verify mobile, choose ABHA address)
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
-type AbhaMode = "create_aadhaar" | "link_aadhaar" | "link_mobile" | "link_number";
+type AbhaMode = "create_aadhaar" | "link_aadhaar" | "link_mobile" | "link_number" | "link_address";
 
 export function RegisterPatient() {
   const navigate = useNavigate();
@@ -57,6 +59,7 @@ export function RegisterPatient() {
   const [aadhaar, setAadhaar] = useState("");
   const [linkMobileNumber, setLinkMobileNumber] = useState("");
   const [abhaNumber, setAbhaNumber] = useState("");
+  const [abhaAddressInput, setAbhaAddressInput] = useState("");
   const [channel, setChannel] = useState<AbhaLoginChannel>("aadhaar");
   const [consent, setConsent] = useState(false);
   const [consentLanguage, setConsentLanguage] = useState<ConsentLanguage>("en");
@@ -102,7 +105,11 @@ export function RegisterPatient() {
     listPatients()
       .then((res) => {
         const p = (res.data || []).find((x) => x.id === existingPatientId);
-        if (!cancelled && p) setLinkMobileNumber((current) => current || p.phone);
+        if (!cancelled && p) {
+          setLinkMobileNumber((current) => current || p.phone);
+          // verifying an ABHA that is already linked: start from the address on record
+          if (p.abha?.abhaAddress) setAbhaAddressInput((current) => current || p.abha?.abhaAddress || "");
+        }
       })
       .catch(() => {
         // the mobile number can still be typed in on the next step
@@ -180,6 +187,26 @@ export function RegisterPatient() {
       }
     }
 
+    if (mode === "link_address") {
+      const address = abhaAddressInput.trim();
+      if (address.includes("@") && !/@(sbx|abdm)$/i.test(address)) {
+        setErrorState({
+          tone: "error",
+          title: "That is an email address, not an ABHA address",
+          body: "An ABHA address ends with @sbx (sandbox) or @abdm (production), for example name@sbx. The email saved on the ABHA cannot be used to find it.",
+        });
+        return;
+      }
+      if (!/^[A-Za-z0-9._]{3,40}(@(sbx|abdm))?$/i.test(address)) {
+        setErrorState({
+          tone: "error",
+          title: "Invalid ABHA address",
+          body: "Enter the ABHA address, for example name@sbx. The part after @ can be left out.",
+        });
+        return;
+      }
+    }
+
     if (mode === "link_number" && abhaNumber.replace(/\D/g, "").length !== 14) {
       setErrorState({
         tone: "error",
@@ -224,7 +251,9 @@ export function RegisterPatient() {
           ? await requestAbhaCreateOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true, consentLanguage })
           : mode === "link_aadhaar"
             ? await requestAbhaLinkOtp({ patientId, aadhaar: cleanAadhaar, environment, consent: true, consentLanguage })
-            : mode === "link_number"
+            : mode === "link_address"
+              ? await requestAbhaAddressOtp({ patientId, abhaAddress: abhaAddressInput.trim(), channel, environment, consent: true, consentLanguage })
+              : mode === "link_number"
               ? await requestAbhaNumberOtp({ patientId, abhaNumber: abhaNumber.replace(/\D/g, ""), channel, environment, consent: true, consentLanguage })
               : await requestAbhaMobileOtp({ patientId, mobile: cleanMobile, environment, consent: true, consentLanguage });
       setTransactionId(res.data.transactionId);
@@ -318,6 +347,15 @@ export function RegisterPatient() {
           const res = await confirmAbhaLink({
             transactionId,
             otp: cleanOtp,
+            environment,
+          });
+          setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
+          setStep(5);
+        } else if (mode === "link_address") {
+          const res = await confirmAbhaAddressOtp({
+            transactionId,
+            otp: cleanOtp,
+            channel,
             environment,
           });
           setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
@@ -569,6 +607,20 @@ export function RegisterPatient() {
                 Link using the 14-digit ABHA number, with an OTP to the Aadhaar-linked or ABHA mobile.
               </div>
             </button>
+            <button
+              className="btn btn-ghost"
+              style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 10 }}
+              onClick={() => {
+                setMode("link_address");
+                setErrorState(null);
+                setStep(3);
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>Link by ABHA address</div>
+              <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                Link using the ABHA address (name@sbx), with an OTP to the Aadhaar-linked or ABHA mobile.
+              </div>
+            </button>
             {refresh ? (
               <button className="btn-link" type="button" onClick={() => navigate(`/record/${patientId}`)}>
                 Back to patient record
@@ -586,6 +638,8 @@ export function RegisterPatient() {
             <h2>
               {mode === "link_mobile"
                 ? "Mobile number"
+                : mode === "link_address"
+                  ? "ABHA address"
                 : mode === "link_number"
                   ? "ABHA number"
                   : mode === "create_aadhaar"
@@ -595,7 +649,7 @@ export function RegisterPatient() {
             <p className="lead">
               {mode === "link_mobile"
                 ? "An OTP will be sent to this mobile number registered with ABHA."
-                : mode === "link_number"
+                : mode === "link_number" || mode === "link_address"
                   ? "An OTP will be sent to the mobile you choose below."
                   : "An OTP will be sent to the mobile linked with this Aadhaar."}
             </p>
@@ -604,20 +658,39 @@ export function RegisterPatient() {
                 <StopState {...errorState} />
               </div>
             )}
-            {mode === "link_number" && (
+            {(mode === "link_number" || mode === "link_address") && (
               <>
-                <div className="field">
-                  <label>ABHA number</label>
-                  <input
-                    className="input mono"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    placeholder="91-1234-5678-9012"
-                    value={abhaNumber}
-                    onChange={(e) => setAbhaNumber(e.target.value.replace(/[^\d-]/g, "").slice(0, 17))}
-                    disabled={loading}
-                  />
-                </div>
+                {mode === "link_number" ? (
+                  <div className="field">
+                    <label>ABHA number</label>
+                    <input
+                      className="input mono"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="91-1234-5678-9012"
+                      value={abhaNumber}
+                      onChange={(e) => setAbhaNumber(e.target.value.replace(/[^\d-]/g, "").slice(0, 17))}
+                      disabled={loading}
+                    />
+                  </div>
+                ) : (
+                  <div className="field">
+                    <label>ABHA address</label>
+                    <input
+                      className="input mono"
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      placeholder="name@sbx"
+                      value={abhaAddressInput}
+                      onChange={(e) => setAbhaAddressInput(e.target.value.replace(/[^A-Za-z0-9._@]/g, "").slice(0, 50))}
+                      disabled={loading}
+                    />
+                    <div className="hint">
+                      This is the ABHA address (for example name@sbx), not the email. The part after @ can be left out; it is added for the
+                      sandbox or production automatically.
+                    </div>
+                  </div>
+                )}
                 <div className="field">
                   <label>Send the OTP to</label>
                   <div className="seg">

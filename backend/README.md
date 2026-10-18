@@ -63,6 +63,8 @@ ABDM gateway tokens last 20 minutes; when a route answers `401 ABDM authenticati
 | `GET` | `/api/abha/profile/card` | query `patientId, environment` | Download the ABHA card (PNG/PDF). Same session restriction as the QR. |
 | `GET` | `/api/abha/audit` | query `patientId?` | ABHA audit trail for the facility (who, action, outcome, error code, IP; no personal data). |
 | `GET` | `/api/abha/profile` | query `patientId, environment` | Live ABHA profile. Only works for the patient whose ABHA was verified in this session. |
+| `POST` | `/api/abha/verify/address/request` | body `{ patientId, abhaAddress, channel, environment, consent }` | Link by ABHA address (PHR login). `channel` is `aadhaar` or `mobile`. A bare name gets `@sbx` / `@abdm` added. |
+| `POST` | `/api/abha/verify/address/confirm` | body `{ transactionId, otp, channel, environment }` | Verify the OTP and link the ABHA. The session token from this login is a PHR token: profile and card work, the QR and mobile/email update do not. |
 | `GET` | `/api/abha/profile/qr` | query `patientId, environment` | Live ABHA QR image, same restriction as the profile. |
 
 Every OTP-request route also needs `consent: true` (the patient accepted the consent text). `patientId` and `transactionId` must be UUIDs. ABDM/UIDAI validation messages (wrong Aadhaar, wrong OTP, 30-second

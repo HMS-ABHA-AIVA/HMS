@@ -1,5 +1,5 @@
 import express from "express";
-import {aadhaarOtpRequestController, aadhaarOtpVerifyController, abdmTokenRetrievalRequest, generateAbhaQrController, getAbhaProfileController, getAbhaCardController, requestExistingAbhaAadhaarOtpController, requestExistingAbhaMobileOtpController, verifyExistingAbhaAadhaarOtpController, verifyExistingAbhaMobileOtpController, verifyExistingAbhaMobileUserController, enrolMobileRequestController, enrolMobileVerifyController, abhaAddressSuggestionsController, createAbhaAddressController, abhaNumberOtpRequestController, abhaNumberOtpVerifyController, listAbhaAuditController, profileContactRequestController, profileContactVerifyController} from "./m1.controller.js";
+import {aadhaarOtpRequestController, aadhaarOtpVerifyController, abdmTokenRetrievalRequest, generateAbhaQrController, getAbhaProfileController, getAbhaCardController, requestExistingAbhaAadhaarOtpController, requestExistingAbhaMobileOtpController, verifyExistingAbhaAadhaarOtpController, verifyExistingAbhaMobileOtpController, verifyExistingAbhaMobileUserController, enrolMobileRequestController, enrolMobileVerifyController, abhaAddressSuggestionsController, createAbhaAddressController, abhaNumberOtpRequestController, abhaNumberOtpVerifyController, listAbhaAuditController, profileContactRequestController, profileContactVerifyController, abhaAddressOtpRequestController, abhaAddressOtpVerifyController} from "./m1.controller.js";
 import {verifyUserJwt} from "../../../common/middlewares/verifyUserJwt.js"
 import {rateLimit} from "../../../common/middlewares/rateLimit.middleware.js"
 import {auditAbha} from "../../../common/middlewares/auditAbha.middleware.js"
@@ -37,6 +37,10 @@ abdmRouter.post("/verify/mobile/user",otpLimiter,verifyUserJwt,auditAbha("LINK_M
 //ABHA number verification (OTP to the Aadhaar-linked mobile or to the ABHA's mobile)
 abdmRouter.post("/verify/number/request",otpLimiter,verifyUserJwt,auditAbha("LINK_ABHA_NUMBER_OTP_REQUEST"),abhaNumberOtpRequestController);
 abdmRouter.post("/verify/number/confirm",otpLimiter,verifyUserJwt,auditAbha("LINK_ABHA_NUMBER_OTP_VERIFY"),abhaNumberOtpVerifyController);
+
+//ABHA address verification (PHR login; OTP to the Aadhaar-linked mobile or to the ABHA's mobile)
+abdmRouter.post("/verify/address/request",otpLimiter,verifyUserJwt,auditAbha("LINK_ABHA_ADDRESS_OTP_REQUEST"),abhaAddressOtpRequestController);
+abdmRouter.post("/verify/address/confirm",otpLimiter,verifyUserJwt,auditAbha("LINK_ABHA_ADDRESS_OTP_VERIFY"),abhaAddressOtpVerifyController);
 
 //generate ABHA QR code
 abdmRouter.get("/profile/qr",verifyUserJwt,auditAbha("ABHA_QR_VIEW"),generateAbhaQrController);

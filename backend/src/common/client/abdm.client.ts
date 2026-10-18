@@ -4,7 +4,7 @@ import { ApiError } from "../errors/appError.js";
 
 type AbdmEnvironment = "SANDBOX" | "PRODUCTION";
 
-type AbdmErrorBody = { error?: { code?: string; message?: string }; message?: string; [field: string]: unknown };
+type AbdmErrorBody = { error?: { code?: string; message?: string }; code?: string; message?: string; [field: string]: unknown };
 
 // Apply one timeout and one safe error translation policy to every ABDM request.
 // Do not log request bodies or headers: they can contain Aadhaar and OTP data.
@@ -17,18 +17,29 @@ const AUDIT_LOG_ENABLED = process.env.ABDM_AUDIT_LOG === "true";
 // QR requests use responseType "arraybuffer", so error bodies can arrive as bytes.
 function parseAbdmBody(raw: unknown): AbdmErrorBody | undefined {
   if (!raw) return undefined;
-  if (typeof raw === "object" && !(raw instanceof ArrayBuffer) && !Buffer.isBuffer(raw)) return raw as AbdmErrorBody;
+  // The PHR endpoints wrap errors in an array: [{ "code": "ABDM-1006: ", "message": "Invalid X-token" }]
+  const unwrap = (value: unknown): AbdmErrorBody | undefined => {
+    const body = Array.isArray(value) ? value[0] : value;
+    return body && typeof body === "object" ? (body as AbdmErrorBody) : undefined;
+  };
+  if (typeof raw === "object" && !(raw instanceof ArrayBuffer) && !Buffer.isBuffer(raw)) return unwrap(raw);
   try {
     const text = Buffer.isBuffer(raw)
       ? raw.toString("utf8")
       : raw instanceof ArrayBuffer
         ? Buffer.from(raw).toString("utf8")
         : String(raw);
-    return JSON.parse(text) as AbdmErrorBody;
+    return unwrap(JSON.parse(text));
   } catch {
     return undefined;
   }
 }
+
+// ABDM puts its code under error.code or at the top level, sometimes with a trailing ": ".
+const abdmErrorCode = (data: AbdmErrorBody | undefined): string | undefined => {
+  const raw = data?.error?.code ?? (typeof data?.code === "string" ? data.code : undefined);
+  return typeof raw === "string" ? raw.replace(/[:\s]+$/, "") : undefined;
+};
 
 // ABDM error bodies come in three shapes:
 //   { error: { code, message } }        e.g. UIDAI errors (HTTP 422, ABDM-1204)
@@ -65,11 +76,12 @@ abdmHttp.interceptors.response.use((response) => {
     const status = error.response?.status;
     const data = parseAbdmBody(error.response?.data);
     const message = extractAbdmMessage(data);
+    const abdmCode = abdmErrorCode(data);
     const requestId = error.config?.headers?.["REQUEST-ID"];
     console.error("ABDM request failed", {
       requestId: typeof requestId === "string" ? requestId : undefined,
       status,
-      code: data?.error?.code,
+      code: abdmCode,
       message,
       url: error.config?.url,
       timedOut: error.code === "ECONNABORTED",
@@ -85,8 +97,8 @@ abdmHttp.interceptors.response.use((response) => {
     if (status === 401) {
       // ABDM also answers 401 for account-level problems (e.g. ABDM-1100 "too many failed attempts",
       // ABDM-1017 "invalid transaction"). Those carry an ABDM error code and a reason; a dead gateway token does not.
-      if (typeof data?.error?.code === "string" && data.error.code.startsWith("ABDM-") && message) {
-        return Promise.reject(classifyAbdmClientError(status, data.error.code, message, error.config?.url));
+      if (abdmCode?.startsWith("ABDM-") && message) {
+        return Promise.reject(classifyAbdmClientError(status, abdmCode, message, error.config?.url));
       }
       return Promise.reject(new ApiError(401, "ABDM authentication required", [], "ABDM_AUTH_REQUIRED"));
     }
@@ -97,7 +109,7 @@ abdmHttp.interceptors.response.use((response) => {
 
     // Every other 4xx carries ABDM/UIDAI's own explanation (wrong Aadhaar, wrong OTP, no ABHA for this
     // number, cool-down ...). Classify it into a specific, staff-readable error instead of masking it.
-    return Promise.reject(classifyAbdmClientError(status ?? 400, data?.error?.code, message, error.config?.url));
+    return Promise.reject(classifyAbdmClientError(status ?? 400, abdmCode, message, error.config?.url));
   },
 );
 
@@ -120,7 +132,13 @@ function classifyAbdmClientError(status: number, abdmCode: string | undefined, m
     return new ApiError(401, "ABHA verification session expired", [], "ABHA_SESSION_EXPIRED");
   }
   if (abdmCode === "ABDM-1115" || abdmCode === "ABDM-1114" || /user not found/i.test(text) || /does not match with any|no (abha|account)s? (found|exist)|not (registered|found).*abha|abha.*not found/i.test(text)) {
-    return fail(404, "ABHA_NOT_FOUND", "No ABHA is registered with these details. Check the number with the patient, or create a new ABHA for them.");
+    return fail(
+      404,
+      "ABHA_NOT_FOUND",
+      url?.includes("/phr/")
+        ? "No ABHA was found for this ABHA address. Check the address with the patient, or use another way to find their ABHA."
+        : "No ABHA is registered with these details. Check the number with the patient, or create a new ABHA for them.",
+    );
   }
   if (/aadhaar number is incorrect|invalid aadhaar|aadhaar.*(not valid|incorrect)/i.test(text)) {
     return fail(422, "AADHAAR_INVALID", "The Aadhaar number is not valid. Check it with the patient and try again.");
@@ -689,4 +707,99 @@ export const abhaLogout = async ({accessToken, xToken, environment}: {accessToke
   );
 
   return response.data;
+};
+
+// ---------------------------------------------------------------------------
+// ABHA address login (PHR web APIs): OTP to the Aadhaar-linked mobile or to the ABHA's own mobile.
+// The token these return is a PHR token: it works on the PHR profile / card calls below, not on /v3/profile/account.
+// ---------------------------------------------------------------------------
+
+// Which OTP methods this address supports, and whether it is active. The reply also carries the holder's name and
+// number; callers must NOT pass those to the browser before the OTP has proved who is at the desk.
+export const searchAbhaAddress = async ({accessToken, abhaAddress, environment}: {accessToken: string; abhaAddress: string; environment: AbdmEnvironment}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/phr/web/login/abha/search`,
+    { abhaAddress },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  return response.data as { healthIdNumber?: string; abhaAddress?: string; authMethods?: string[]; blockedAuthMethods?: string[]; status?: string; [key: string]: unknown };
+};
+
+export const requestAbhaAddressOtp = async ({accessToken, encryptedAddress, channel, environment}: {
+  accessToken: string; encryptedAddress: string; channel: AbhaLoginChannel; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/phr/web/login/abha/request/otp`,
+    {
+      scope: ["abha-address-login", channel === "aadhaar" ? "aadhaar-verify" : "mobile-verify"],
+      loginHint: "abha-address",
+      loginId: encryptedAddress,
+      otpSystem: channel === "aadhaar" ? "aadhaar" : "abdm",
+    },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  return response.data as { txnId: string; message: string };
+};
+
+export const verifyAbhaAddressOtp = async ({accessToken, txnId, encryptedOtp, channel, environment}: {
+  accessToken: string; txnId: string; encryptedOtp: string; channel: AbhaLoginChannel; environment: AbdmEnvironment;
+}) => {
+  const response = await abdmHttp.post(
+    `${getBaseUrl(environment)}/v3/phr/web/login/abha/verify`,
+    {
+      scope: ["abha-address-login", channel === "aadhaar" ? "aadhaar-verify" : "mobile-verify"],
+      authData: {
+        authMethods: ["otp"],
+        otp: { txnId, otpValue: encryptedOtp },
+      },
+    },
+    { headers: baseHeaders(accessToken) },
+  );
+
+  // ABDM answers HTTP 200 with authResult "failed" for a wrong or expired OTP.
+  return response.data as {
+    txnId?: string;
+    authResult?: string;
+    message?: string;
+    users?: { abhaAddress?: string; abhaNumber?: string; fullName?: string; name?: string; gender?: string; dateOfBirth?: string; dob?: string; status?: string; [key: string]: unknown }[];
+    tokens?: { token?: string; expiresIn?: number };
+    token?: string;
+    expiresIn?: number;
+  };
+};
+
+export const getPhrProfile = async ({accessToken, xToken, environment}: {accessToken: string; xToken: string; environment: AbdmEnvironment}) => {
+  const response = await abdmHttp.get(
+    `${getBaseUrl(environment)}/v3/phr/web/login/profile/abha-profile`,
+    {
+      headers: {
+        "REQUEST-ID": randomUUID(),
+        TIMESTAMP: new Date().toISOString(),
+        Authorization: `Bearer ${accessToken}`,
+        "X-token": `Bearer ${xToken}`,
+      },
+    },
+  );
+
+  return response.data as { abhaAddress?: string; abhaNumber?: string; healthIdNumber?: string; fullName?: string; name?: string; gender?: string; dateOfBirth?: string; kycStatus?: string; status?: string; [key: string]: unknown };
+};
+
+export const getPhrCard = async ({accessToken, xToken, environment}: {accessToken: string; xToken: string; environment: AbdmEnvironment}) => {
+  const response = await abdmHttp.get(
+    `${getBaseUrl(environment)}/v3/phr/web/login/profile/abha/phr-card`,
+    {
+      responseType: "arraybuffer",
+      headers: {
+        "REQUEST-ID": randomUUID(),
+        TIMESTAMP: new Date().toISOString(),
+        Authorization: `Bearer ${accessToken}`,
+        "X-token": `Bearer ${xToken}`,
+        Accept: "*/*",
+      },
+    },
+  );
+
+  return normalizeBinaryResponse(Buffer.from(response.data), String(response.headers["content-type"] ?? ""), "ABHA card");
 };
