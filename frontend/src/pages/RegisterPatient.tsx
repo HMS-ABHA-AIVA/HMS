@@ -55,9 +55,8 @@ export function RegisterPatient() {
   const [loading, setLoading] = useState(false);
   const [errorState, setErrorState] = useState<MappedErrorState | null>(null);
 
-  const isDemoSession =
-    (session?.kind === "staff" && session.id === "st7") ||
-    session?.email === "admin@hospital.com";
+  // isDemoSession is ONLY the in-memory fake session (id=st7), NOT real backend accounts.
+  const isDemoSession = session?.kind === "staff" && session.id === "st7";
 
   // Step 1: Create patient
   async function handleSavePatient() {
@@ -148,38 +147,30 @@ export function RegisterPatient() {
 
     setLoading(true);
     try {
-      try {
-        await withAbdmSession(environment, async () => {
-          if (mode === "create_aadhaar") {
-            const res = await requestAbhaCreateOtp({
-              patientId,
-              aadhaar: aadhaar.replace(/\D/g, ""),
-              environment,
-            });
-            setTransactionId(res.data.transactionId);
-          } else if (mode === "link_aadhaar") {
-            const res = await requestAbhaLinkOtp({
-              patientId,
-              aadhaar: aadhaar.replace(/\D/g, ""),
-              environment,
-            });
-            setTransactionId(res.data.transactionId);
-          } else if (mode === "link_mobile") {
-            const res = await requestAbhaMobileOtp({
-              patientId,
-              mobile: (linkMobileNumber || form.mobile).replace(/\D/g, ""),
-              environment,
-            });
-            setTransactionId(res.data.transactionId);
-          }
-        });
-      } catch (err: any) {
-        if (isDemoSession || err?.status === 401) {
-          setTransactionId("TXN-DEMO-" + Date.now());
-        } else {
-          throw err;
+      await withAbdmSession(environment, async () => {
+        if (mode === "create_aadhaar") {
+          const res = await requestAbhaCreateOtp({
+            patientId,
+            aadhaar: aadhaar.replace(/\D/g, ""),
+            environment,
+          });
+          setTransactionId(res.data.transactionId);
+        } else if (mode === "link_aadhaar") {
+          const res = await requestAbhaLinkOtp({
+            patientId,
+            aadhaar: aadhaar.replace(/\D/g, ""),
+            environment,
+          });
+          setTransactionId(res.data.transactionId);
+        } else if (mode === "link_mobile") {
+          const res = await requestAbhaMobileOtp({
+            patientId,
+            mobile: (linkMobileNumber || form.mobile).replace(/\D/g, ""),
+            environment,
+          });
+          setTransactionId(res.data.transactionId);
         }
-      }
+      });
       setStep(4);
     } catch (err) {
       setErrorState(mapApiError(err, { label: "Try again", onClick: () => setErrorState(null) }));
@@ -203,81 +194,65 @@ export function RegisterPatient() {
 
     setLoading(true);
     try {
-      try {
-        await withAbdmSession(environment, async () => {
-          if (mode === "create_aadhaar") {
-            const mobileForEnrol = (form.mobile || linkMobileNumber).replace(/\D/g, "");
-            await verifyAbhaCreateOtp({
+      await withAbdmSession(environment, async () => {
+        if (mode === "create_aadhaar") {
+          const mobileForEnrol = (form.mobile || linkMobileNumber).replace(/\D/g, "");
+          await verifyAbhaCreateOtp({
+            transactionId,
+            otp: cleanOtp,
+            mobile: mobileForEnrol,
+            environment,
+          });
+          setStep(5);
+        } else if (mode === "link_aadhaar") {
+          await confirmAbhaLink({
+            transactionId,
+            otp: cleanOtp,
+            environment,
+          });
+          setStep(5);
+        } else if (mode === "link_mobile") {
+          // If accounts already retrieved and user selected one:
+          if (mobileAccounts.length > 0) {
+            if (!selectedAbhaNumber) {
+              setErrorState({
+                tone: "error",
+                title: "Select an ABHA account",
+                body: "Please choose which ABHA account to link to this patient.",
+              });
+              return;
+            }
+            await verifyAbhaMobileUser({
+              abhaNumber: selectedAbhaNumber,
               transactionId,
-              otp: cleanOtp,
-              mobile: mobileForEnrol,
               environment,
             });
             setStep(5);
-          } else if (mode === "link_aadhaar") {
-            await confirmAbhaLink({
+          } else {
+            // Confirm OTP and retrieve linked accounts
+            const res = await confirmAbhaMobileOtp({
               transactionId,
               otp: cleanOtp,
               environment,
             });
-            setStep(5);
-          } else if (mode === "link_mobile") {
-            // If accounts already retrieved and user selected one:
-            if (mobileAccounts.length > 0) {
-              if (!selectedAbhaNumber) {
-                setErrorState({
-                  tone: "error",
-                  title: "Select an ABHA account",
-                  body: "Please choose which ABHA account to link to this patient.",
-                });
-                return;
-              }
+            const accounts = res.data?.accounts || [];
+            if (accounts.length === 1) {
+              // Only 1 account: link directly
               await verifyAbhaMobileUser({
-                abhaNumber: selectedAbhaNumber,
-                transactionId,
+                abhaNumber: accounts[0].ABHANumber,
+                transactionId: res.data.transactionId,
                 environment,
               });
               setStep(5);
+            } else if (accounts.length > 1) {
+              setMobileAccounts(accounts);
+              setSelectedAbhaNumber(accounts[0].ABHANumber);
             } else {
-              // Confirm OTP and retrieve linked accounts
-              const res = await confirmAbhaMobileOtp({
-                transactionId,
-                otp: cleanOtp,
-                environment,
-              });
-              const accounts = res.data?.accounts || [];
-              if (accounts.length === 1) {
-                // Only 1 account: link directly
-                await verifyAbhaMobileUser({
-                  abhaNumber: accounts[0].ABHANumber,
-                  transactionId: res.data.transactionId,
-                  environment,
-                });
-                setStep(5);
-              } else if (accounts.length > 1) {
-                setMobileAccounts(accounts);
-                setSelectedAbhaNumber(accounts[0].ABHANumber);
-              } else {
-                throw new Error("No ABHA accounts associated with this mobile number.");
-              }
+              throw new Error("No ABHA accounts associated with this mobile number.");
             }
           }
-        });
-      } catch (err: any) {
-        if (isDemoSession || err?.status === 401) {
-          const generatedAbha = "14-" + Math.floor(1000 + Math.random() * 9000) + "-" + Math.floor(1000 + Math.random() * 9000) + "-" + Math.floor(1000 + Math.random() * 9000);
-          const p = SAMPLE_PATIENTS.find((x) => x.id === patientId);
-          if (p) {
-            p.abha = {
-              abhaNumber: generatedAbha,
-              abhaAddress: (form.name.toLowerCase().replace(/\s+/g, ".") || "patient") + "@abdm",
-            };
-          }
-          setStep(5);
-        } else {
-          throw err;
         }
-      }
+      });
     } catch (err) {
       setErrorState(
         mapApiError(err, {

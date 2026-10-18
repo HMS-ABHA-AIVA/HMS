@@ -141,17 +141,18 @@ button { font-family: inherit; }
 .addlink { font-size: 12px; display: block; margin-top: 2px; }
 
 /* ---------- Register stepper ---------- */
-.reg-wrap { display: grid; grid-template-columns: 220px 1fr; gap: 28px; align-items: start; }
-.steps { list-style: none; margin: 8px 0 0; padding: 0; }
-.steps li { display: flex; gap: 10px; padding: 8px 0; color: var(--text-dim); }
-.steps .num { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line-2); font-size: 12px; display: grid; place-items: center; flex: 0 0 20px; }
+.reg-wrap { display: grid; grid-template-columns: 200px 1fr; gap: 32px; align-items: start; min-width: 0; }
+.steps { list-style: none; margin: 8px 0 0; padding: 0; min-width: 0; }
+.steps li { display: flex; gap: 10px; padding: 8px 0; color: var(--text-dim); min-width: 0; }
+.steps .num { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-2); font-size: 12px; display: grid; place-items: center; flex: 0 0 22px; }
 .steps li.done .num, .steps li.current .num { background: var(--ink); color: #fff; border-color: var(--ink); }
 .steps li.current .lbl { color: var(--text); font-weight: 600; }
 .steps .state { font-size: 11.5px; color: var(--text-faint); }
-.card-form { background: var(--paper); border: 1px solid var(--line); border-radius: 3px; padding: 22px 24px; max-width: 520px; }
+.card-form { background: var(--paper); border: 1px solid var(--line); border-radius: 3px; padding: 22px 24px; max-width: 520px; min-width: 0; overflow: hidden; }
 .card-form h2 { margin: 0 0 4px; font-size: 16px; }
 .card-form .lead { color: var(--text-dim); font-size: 13px; margin: 0 0 18px; }
 .form-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
+
 
 /* ---------- Sign in ---------- */
 .signin { display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
