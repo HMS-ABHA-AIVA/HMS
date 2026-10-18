@@ -49,7 +49,9 @@ export const generateAbdmSessionToken = async ({
       if (error.response.status === 401 || error.response.status === 403) {
         throw new ApiError(502, "ABDM rejected authentication. Check the configured credentials and environment.");
       }
-      throw new ApiError(502, "ABDM could not issue a session token. Check the credentials and try again.");
+      const data = error.response.data as { error?: { code?: string; message?: string }; message?: string } | undefined;
+      const gatewayMessage = data?.error?.message || (typeof data?.message === "string" ? data.message : undefined);
+      throw new ApiError(502, gatewayMessage || "ABDM could not issue a session token. Check the credentials and try again.");
     }
     throw error;
   }
