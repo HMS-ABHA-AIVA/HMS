@@ -15,7 +15,10 @@ export const generateAbdmSessionToken = async ({
   clientSecret,
   environment,
 }: GenerateSessionTokenParams) => {
-  const Url = environment === "SANDBOX"? process.env.SANDBOX_SESSION_URL : process.env.PROD_SESSION_URL;
+  // V3 gateway session endpoints (the legacy /gateway/v0.5/sessions ones are not accepted for M1).
+  const Url = environment === "SANDBOX"
+    ? process.env.SANDBOX_SESSION_URL || "https://dev.abdm.gov.in/api/hiecm/gateway/v3/sessions"
+    : process.env.PROD_SESSION_URL || "https://live.abdm.gov.in/api/hiecm/gateway/v3/sessions";
 
   const cmId = environment === "SANDBOX" ? "sbx" : "abdm";
 

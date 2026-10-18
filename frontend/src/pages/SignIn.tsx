@@ -176,21 +176,6 @@ export function SignIn() {
               <span>New hospital? <a onClick={() => { setIsRegisteringFacility(true); setError(null); }} style={{ cursor: "pointer" }}>Register a facility</a></span>
             )}
           </div>
-
-          {import.meta.env.DEV && !isRegisteringFacility && (
-            <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid var(--line)", fontSize: 12 }}>
-              <span style={{ color: "var(--text-dim)" }}>Demo bypass: </span>
-              <a
-                style={{ cursor: "pointer", fontWeight: 600 }}
-                onClick={() => {
-                  setEmail("admin@hospital.com");
-                  setPassword("password");
-                }}
-              >
-                Use admin@hospital.com / password
-              </a>
-            </div>
-          )}
         </form>
       </div>
     </div>

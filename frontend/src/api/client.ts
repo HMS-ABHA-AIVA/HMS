@@ -29,8 +29,9 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     res = await fetch(`${BASE}${path}`, {
       method,
       credentials: 'include',
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      // The API only accepts JSON on state-changing requests (CSRF guard), even when there is no payload.
+      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Check that the backend is running.');
