@@ -1,6 +1,7 @@
 import axios from "axios";
 import { randomUUID } from "crypto";
 import { ApiError } from "../errors/appError.js";
+import { edgeLogInfo, isEdgeBlock, regionBlockedError } from "../utils/abdmEdge.js";
 
 type AbdmEnvironment = "SANDBOX" | "PRODUCTION";
 
@@ -45,12 +46,14 @@ export const generateAbdmSessionToken = async ({
         status: error.response?.status,
         code: error.code,
         timedOut: error.code === "ECONNABORTED",
+        ...(error.response?.status === 403 ? edgeLogInfo(error.response) : {}),
       });
+      if (isEdgeBlock(error.response)) throw regionBlockedError();
       if (!error.response || error.response.status >= 500 || error.code === "ECONNABORTED") {
         throw new ApiError(503, "ABHA service is temporarily unavailable. Please try again.");
       }
       if (error.response.status === 401 || error.response.status === 403) {
-        throw new ApiError(502, "ABDM rejected authentication. Check the configured credentials and environment.");
+        throw new ApiError(502, "ABDM rejected authentication. Check the configured credentials and environment.", [], "ABDM_AUTH_REJECTED");
       }
       const data = error.response.data as { error?: { code?: string; message?: string }; message?: string } | undefined;
       const gatewayMessage = data?.error?.message || (typeof data?.message === "string" ? data.message : undefined);

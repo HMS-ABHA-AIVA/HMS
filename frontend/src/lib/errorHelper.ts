@@ -29,6 +29,7 @@ const CODE_TITLES: Record<string, { tone: MappedErrorState["tone"]; title: strin
   NO_ABHA_LINKED: { tone: "error", title: "No ABHA linked to this patient" },
   ABDM_UNAVAILABLE: { tone: "error", title: "ABDM is temporarily unavailable" },
   ABDM_AUTH_REJECTED: { tone: "error", title: "ABDM rejected the hospital's credentials" },
+  ABDM_REGION_BLOCKED: { tone: "error", title: "ABDM is blocking this server's location" },
   ABDM_NOT_FOUND: { tone: "error", title: "ABDM could not find this record" },
   OTP_CHANNEL_UNAVAILABLE: { tone: "error", title: "OTP method not available" },
   QR_NOT_AVAILABLE: { tone: "pending", title: "QR not available after an ABHA-address verification" },

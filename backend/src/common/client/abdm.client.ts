@@ -1,6 +1,7 @@
 import axios from "axios";
 import { randomUUID } from "crypto";
 import { ApiError } from "../errors/appError.js";
+import { edgeLogInfo, isEdgeBlock, regionBlockedError } from "../utils/abdmEdge.js";
 
 type AbdmEnvironment = "SANDBOX" | "PRODUCTION";
 
@@ -104,6 +105,10 @@ abdmHttp.interceptors.response.use((response) => {
     }
 
     if (status === 403) {
+      if (isEdgeBlock(error.response)) {
+        console.error("ABDM edge block", edgeLogInfo(error.response));
+        return Promise.reject(regionBlockedError());
+      }
       return Promise.reject(new ApiError(502, "ABDM rejected authentication. Check the configured credentials and environment.", [], "ABDM_AUTH_REJECTED"));
     }
 
