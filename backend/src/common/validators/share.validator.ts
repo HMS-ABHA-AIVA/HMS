@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mobileNumber } from "./mobile.js";
 
 // Counter id from the QR code (ABDM: 1 to 20 alphanumeric characters; a little leeway for spaces . _ -).
 export const counterCodeSchema = z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,49}$/, "Counter id may contain only letters, digits, space . _ -");
@@ -41,7 +42,7 @@ export const shareIdParamSchema = z.uuid("Invalid share ID");
 
 // Staff may supply a different mobile number when the one on the ABHA is missing or already used by another patient.
 export const registerShareSchema = z.object({
-    phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits").optional(),
+    phone: mobileNumber.optional(),
 }).strict();
 
 export const shareConfigQuerySchema = z.object({

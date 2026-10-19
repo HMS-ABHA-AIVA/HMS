@@ -37,6 +37,25 @@ describe("Patients can share a mobile number", () => {
     assert.equal(r.status, 200, JSON.stringify(r.json));
   });
 
+  it("says exactly what is wrong with a mobile number", async () => {
+    const cases: [string, RegExp][] = [
+      ["", /Enter the 10-digit mobile number/],
+      ["98765abc10", /digits only.*"a" "b" "c"/],
+      ["+919876543210", /digits only.*"\+"/],
+      ["98765", /has 5 digits, but it needs 10/],
+      ["919876543210", /12 digits.*country code 91/],
+      ["09876543210", /11 digits.*leading 0/],
+      ["98765432101234", /has 14 digits, but it needs exactly 10/],
+      ["1234567890", /starts with 1.*6, 7, 8 or 9/],
+      ["9999999999", /same digit repeated/],
+    ];
+    for (const [phone, expected] of cases) {
+      const r = await create({ name: "Test Person", phone, dateOfBirth: "1990-01-01" });
+      assert.equal(r.status, 400, `${phone} -> ${JSON.stringify(r.json)}`);
+      assert.match(String(r.json.message), expected, phone);
+    }
+  });
+
   it("registers from an ABHA alone: no name, no date of birth", async () => {
     const r = await create({ phone: "9000000003" });
     assert.equal(r.status, 201, JSON.stringify(r.json));

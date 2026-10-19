@@ -176,6 +176,8 @@ export const confirmAbhaNumberOtp = (body: {
   otp: string;
   channel: AbhaLoginChannel;
   environment: AbdmEnvironment;
+  /** the patient was registered with this ABHA and a mobile number, which must be the ABHA's own */
+  requireMobileMatch?: boolean;
 }) => post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/number/confirm', body);
 
 // ABHA address flow (PHR login): same two OTP channels as the ABHA number flow
@@ -193,6 +195,7 @@ export const confirmAbhaAddressOtp = (body: {
   otp: string;
   channel: AbhaLoginChannel;
   environment: AbdmEnvironment;
+  requireMobileMatch?: boolean;
 }) => post<Envelope<AbhaProfile & { patientId: string; transactionId: string }>>('/abha/verify/address/confirm', body);
 
 // Mobile verification flow (Step 1, Step 2, Step 3)

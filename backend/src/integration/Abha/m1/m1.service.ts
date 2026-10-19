@@ -85,6 +85,8 @@ const linkAbhaToPatient = async (
   abhaAddress: string | null,
   demographics: AbhaDemographics,
   newlyCreated = false,
+  // The patient was registered with this ABHA and a mobile number: that number must be the one on the ABHA.
+  requireMobileMatch = false,
 ) => {
   const patient = await prisma.patient.findUnique({
     where: { id: patientId },
@@ -109,6 +111,18 @@ const linkAbhaToPatient = async (
           : "Check the patient's details, or confirm you are using the right ABHA."),
       [],
       "DETAILS_MISMATCH",
+    );
+  }
+
+  if (requireMobileMatch && mobileMatchesRecord(patient.phone, demographics.mobile) === false) {
+    await setTransactionStatus(transactionId, "FAILED");
+    const abhaMobile = String(demographics.mobile);
+    throw new ApiError(
+      422,
+      `The mobile number entered (ending ${last10(patient.phone).slice(-4)}) is not the one registered with this ABHA (ending ${last10(abhaMobile).slice(-4)}), so nothing was linked. ` +
+        "Check the mobile number, or check that this is the right ABHA number / address.",
+      [],
+      "ABHA_MOBILE_MISMATCH",
     );
   }
 
@@ -369,6 +383,7 @@ const finishLoginVerification = async (
   abdmResponse: { txnId?: string; authResult?: string; message?: string; token?: string; expiresIn?: number; accounts?: { ABHANumber: string }[] },
   abdmAccessToken: string,
   environment: Environment,
+  requireMobileMatch = false,
 ) => {
   if (abdmResponse.authResult !== "success") {
     throw new ApiError(422, abdmResponse.message || "The OTP could not be verified. Check it and try again.", [], "OTP_INVALID");
@@ -421,6 +436,8 @@ const finishLoginVerification = async (
     profile.ABHANumber,
     profile.preferredAbhaAddress ?? null,
     profile,
+    false,
+    requireMobileMatch,
   );
 
   await setTransactionStatus(transaction.id, "COMPLETED");
@@ -885,7 +902,7 @@ export const requestAbhaNumberOtpService = async (patientId: string, facilityId:
   };
 };
 
-export const verifyAbhaNumberOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string, channel: AbhaLoginChannel) => {
+export const verifyAbhaNumberOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string, channel: AbhaLoginChannel, requireMobileMatch = false) => {
   const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
 
   const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
@@ -898,7 +915,7 @@ export const verifyAbhaNumberOtpService = async (transactionId: string, facility
     environment,
   });
 
-  return finishLoginVerification(transaction, abdmResponse, abdmAccessToken, environment);
+  return finishLoginVerification(transaction, abdmResponse, abdmAccessToken, environment, requireMobileMatch);
 };
 
 // ---------------------------------------------------------------------------
@@ -1032,7 +1049,7 @@ export const requestAbhaAddressOtpService = async (patientId: string, facilityId
   return { transactionId: transaction.id, message: abdmResponse.message };
 };
 
-export const verifyAbhaAddressOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string, channel: AbhaLoginChannel) => {
+export const verifyAbhaAddressOtpService = async (transactionId: string, facilityId: string, abdmAccessToken: string, environment: Environment, otp: string, channel: AbhaLoginChannel, requireMobileMatch = false) => {
   const transaction = await loadPendingTransaction(transactionId, facilityId, "VERIFICATION");
 
   const encryptedOtp = await encryptForAbdm(environment, abdmAccessToken, otp);
@@ -1093,7 +1110,7 @@ export const verifyAbhaAddressOtpService = async (transactionId: string, facilit
     districtName: user.districtName,
   };
 
-  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, address, demographics);
+  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, address, demographics, false, requireMobileMatch);
 
   await setTransactionStatus(transaction.id, "COMPLETED");
 

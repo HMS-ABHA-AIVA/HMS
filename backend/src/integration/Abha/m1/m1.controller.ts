@@ -385,10 +385,10 @@ export const abhaNumberOtpRequestController = async (req: userAuthRequest, res: 
 export const abhaNumberOtpVerifyController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = requireUser(req);
-    const { transactionId, otp, channel, environment } = parseOrThrow(abhaNumberOtpVerifySchema, req.body);
+    const { transactionId, otp, channel, environment, requireMobileMatch } = parseOrThrow(abhaNumberOtpVerifySchema, req.body);
     const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const resultData = await verifyAbhaNumberOtpService(transactionId, user.facilityId, abdmAccessToken, environment, otp, channel);
+    const resultData = await verifyAbhaNumberOtpService(transactionId, user.facilityId, abdmAccessToken, environment, otp, channel, requireMobileMatch === true);
 
     setAbhaSessionCookies(res, resultData.token, resultData.patientId, resultData.expiresIn);
 
@@ -522,10 +522,10 @@ export const abhaAddressOtpRequestController = async (req: userAuthRequest, res:
 export const abhaAddressOtpVerifyController = async (req: userAuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = requireUser(req);
-    const { transactionId, otp, channel, environment } = parseOrThrow(abhaAddressOtpVerifySchema, req.body);
+    const { transactionId, otp, channel, environment, requireMobileMatch } = parseOrThrow(abhaAddressOtpVerifySchema, req.body);
     const abdmAccessToken = requireAbdmAccessToken(req);
 
-    const resultData = await verifyAbhaAddressOtpService(transactionId, user.facilityId, abdmAccessToken, environment, otp, channel);
+    const resultData = await verifyAbhaAddressOtpService(transactionId, user.facilityId, abdmAccessToken, environment, otp, channel, requireMobileMatch === true);
 
     // The token from an ABHA-address login is a PHR token (profile and card only).
     setAbhaSessionCookies(res, resultData.token, resultData.patientId, resultData.expiresIn, "phr");

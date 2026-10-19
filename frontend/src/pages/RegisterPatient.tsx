@@ -27,6 +27,7 @@ import { ContactUpdate } from "@/components/ContactUpdate";
 import { withAbdmSession } from "@/api/abdmSession";
 import { StopState } from "@/pages/ErrorStates";
 import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
+import { mobileProblem } from "@/lib/mobile";
 
 import { OTP_RESEND_SECONDS, MAX_OTP_RESENDS } from "@/lib/abhaRules";
 
@@ -76,6 +77,8 @@ export function RegisterPatient() {
     abhaNumber: string;
     abhaAddress: string | null;
   } | null>(null);
+  // The ABHA was typed on step 1 together with a mobile number: that number must be the one registered on the ABHA.
+  const [mustMatchMobile, setMustMatchMobile] = useState(false);
   const [mobileAccounts, setMobileAccounts] = useState<AbhaAccountItem[]>([]);
   const [selectedAbhaNumber, setSelectedAbhaNumber] = useState("");
 
@@ -166,11 +169,12 @@ export function RegisterPatient() {
         abhaKind = "link_address";
       }
     }
-    const cleanMobile = form.mobile.replace(/\D/g, "");
-    if (cleanMobile.length !== 10) {
-      setErrorState({ tone: "error", title: "Invalid mobile number", body: "Mobile number must be exactly 10 digits." });
+    const mobileIssue = mobileProblem(form.mobile);
+    if (mobileIssue) {
+      setErrorState({ tone: "error", title: form.mobile.trim() ? "Wrong mobile number" : "Mobile number needed", body: mobileIssue });
       return;
     }
+    const cleanMobile = form.mobile.trim();
 
     setLoading(true);
     try {
@@ -188,6 +192,7 @@ export function RegisterPatient() {
         if (abhaKind === "link_number") setAbhaNumber(abhaId.replace(/[^\d-]/g, "").slice(0, 17));
         else setAbhaAddressInput(abhaId);
         setMode(abhaKind);
+        setMustMatchMobile(true);
         setStep(3);
       } else {
         setStep(2);
@@ -254,12 +259,9 @@ export function RegisterPatient() {
 
     // The mobile number is what ABHA is linked to (create) or searched by (link by mobile).
     if (mode === "create_aadhaar" || mode === "link_mobile") {
-      if (linkMobileNumber.replace(/\D/g, "").length !== 10) {
-        setErrorState({
-          tone: "error",
-          title: "Invalid mobile number",
-          body: "Mobile number must be exactly 10 digits.",
-        });
+      const mobileIssue = mobileProblem(linkMobileNumber);
+      if (mobileIssue) {
+        setErrorState({ tone: "error", title: linkMobileNumber.trim() ? "Wrong mobile number" : "Mobile number needed", body: mobileIssue });
         return;
       }
     }
@@ -393,6 +395,7 @@ export function RegisterPatient() {
             otp: cleanOtp,
             channel,
             environment,
+            ...(mustMatchMobile ? { requireMobileMatch: true } : {}),
           });
           setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
           setStep(5);
@@ -402,6 +405,7 @@ export function RegisterPatient() {
             otp: cleanOtp,
             channel,
             environment,
+            ...(mustMatchMobile ? { requireMobileMatch: true } : {}),
           });
           setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
           setStep(5);
@@ -581,6 +585,9 @@ export function RegisterPatient() {
                   disabled={loading}
                 />
               </div>
+              {form.abhaId.trim() && (
+                <div className="hint">When an ABHA is entered, this must be the mobile number registered on that ABHA.</div>
+              )}
             </div>
             <div className="field">
               <label>

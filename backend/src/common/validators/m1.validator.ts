@@ -1,4 +1,5 @@
 import {z} from "zod"
+import { mobileNumber } from "./mobile.js";
 
 // The patient must have agreed to the consent text shown before any OTP is requested.
 const consent = z.literal(true, "Patient consent is required before an OTP is sent");
@@ -20,7 +21,7 @@ export const aadhaarOtpRequestSchema = z.object({
 export const aadharOtpVerifySchema = z.object({
     transactionId : z.uuid("invalid transaction ID"),
     otp : z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
-    mobile : z.string().regex(/^\d{10}$/, "Mobile number must be exactly 10 digits"),
+    mobile : mobileNumber,
     environment : z.enum(["SANDBOX" ,  "PRODUCTION"])
 
 })
@@ -43,7 +44,7 @@ export const existingAbhaAadhaarOtpVerifySchema = z.object({
 export const existingAbhaMobileOtpRequestSchema = z.object({
   patientId: z.uuid("Invalid patient ID"),
 
-  mobile: z.string().regex(/^\d{10}$/, "Mobile number must be 10 digits"),
+  mobile: mobileNumber,
 
   environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
   consent,
@@ -78,7 +79,7 @@ export const getAbhaProfileSchema = z.object({
 
 export const enrolMobileRequestSchema = z.object({
     transactionId: z.uuid("Invalid transaction ID"),
-    mobile: z.string().regex(/^\d{10}$/, "Mobile number must be exactly 10 digits"),
+    mobile: mobileNumber,
     environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
 });
 
@@ -118,6 +119,8 @@ export const abhaNumberOtpVerifySchema = z.object({
     otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
     channel: loginChannel,
     environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+    // set when the patient was registered with this ABHA and a mobile number, which must then be the ABHA's own
+    requireMobileMatch: z.boolean().optional(),
 });
 
 // --- update the ABHA mobile / email ---------------------------------------------------------------------
@@ -128,7 +131,7 @@ const contactBase = {
 };
 
 export const profileContactRequestSchema = z.discriminatedUnion("type", [
-    z.object({ ...contactBase, type: z.literal("mobile"), value: z.string().regex(/^\d{10}$/, "Mobile number must be exactly 10 digits") }),
+    z.object({ ...contactBase, type: z.literal("mobile"), value: mobileNumber }),
     z.object({ ...contactBase, type: z.literal("email"), value: z.email("Enter a valid email address").max(254, "Email address is too long") }),
 ]);
 
@@ -164,4 +167,6 @@ export const abhaAddressOtpVerifySchema = z.object({
     otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
     channel: loginChannel,
     environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+    // set when the patient was registered with this ABHA and a mobile number, which must then be the ABHA's own
+    requireMobileMatch: z.boolean().optional(),
 });

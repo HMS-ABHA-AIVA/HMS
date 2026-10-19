@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mobileNumber } from "./mobile.js";
 
 // "YYYY-MM-DD" that is a real calendar date, not in the future, and not absurdly old.
 const dateOfBirth = z
@@ -22,7 +23,7 @@ export const createPatientSchema = z.object({
         .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'’\-]*$/u, "Patient name may contain only letters, spaces and . ' -")
         .optional(),
 
-    phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
+    phone: mobileNumber,
 
     email: z.email("Invalid email address").max(254, "Email address is too long").optional(),
 
@@ -41,7 +42,7 @@ const optionalText = (max: number, label: string) =>
     z.string().trim().max(max, `${label} is too long`).regex(/^[^\u0000-\u001f\u007f]*$/, `${label} contains characters that are not allowed`);
 
 export const updatePatientSchema = z.object({
-    phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits").optional(),
+    phone: mobileNumber.optional(),
     email: z.union([z.email("Invalid email address").max(254, "Email address is too long"), z.literal("")]).optional(),
     address: optionalText(300, "Address").optional(),
     stateName: optionalText(80, "State").optional(),

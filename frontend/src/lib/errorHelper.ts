@@ -43,6 +43,7 @@ const CODE_TITLES: Record<string, { tone: MappedErrorState["tone"]; title: strin
   ABHA_SESSION_EXPIRED: { tone: "pending", title: "ABHA verification has ended" },
   SHARE_NOT_FOUND: { tone: "pending", title: "Shared profile no longer available" },
   PHONE_REQUIRED: { tone: "error", title: "Mobile number needed" },
+  ABHA_MOBILE_MISMATCH: { tone: "error", title: "Mobile number does not match this ABHA" },
 };
 
 /**
