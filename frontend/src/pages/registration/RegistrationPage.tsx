@@ -15,10 +15,36 @@ export function RegistrationPage() {
 
   const filtered = useMemo(() => {
     if (!query.trim()) return patients;
-    const q = query.toLowerCase();
-    return patients.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.mrn.toLowerCase().includes(q) || p.phone.includes(q)
-    );
+    const q = query.trim().toLowerCase();
+    const queryDigits = q.replace(/\D/g, "");
+
+    return patients.filter((p) => {
+      const name = (p.name || "").toLowerCase();
+      const mrn = (p.mrn || "").toLowerCase();
+      const phone = (p.phone || "").toLowerCase();
+      const abhaNumber = (p.abhaNumber || "").toLowerCase();
+      const abhaAddress = (p.abhaAddress || "").toLowerCase();
+
+      if (
+        name.includes(q) ||
+        mrn.includes(q) ||
+        phone.includes(q) ||
+        abhaNumber.includes(q) ||
+        abhaAddress.includes(q)
+      ) {
+        return true;
+      }
+
+      if (queryDigits.length > 0) {
+        const cleanAbha = abhaNumber.replace(/\D/g, "");
+        if (cleanAbha && cleanAbha.includes(queryDigits)) return true;
+
+        const cleanPhone = phone.replace(/\D/g, "");
+        if (cleanPhone && cleanPhone.includes(queryDigits)) return true;
+      }
+
+      return false;
+    });
   }, [patients, query]);
 
   const sorted = [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -37,7 +63,7 @@ export function RegistrationPage() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by name, MRN, or mobile number…"
+          placeholder="Search by name, MRN, mobile number, or ABHA…"
           style={{ maxWidth: 420 }}
         />
       </div>

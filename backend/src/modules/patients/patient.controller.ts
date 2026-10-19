@@ -4,6 +4,7 @@ import type { userAuthRequest } from "../../common/middlewares/verifyUserJwt.js"
 import { createPatientSchema, listPatientsQuerySchema, updatePatientSchema } from "../../common/validators/patient.validation.js";
 import { createPatientService,getAllPatientsService,getPatientTransactionsService,updatePatientService} from "./patient.service.js";
 import { logSecurityEvent } from "../../common/utils/securityLog.js";
+import { PENDING_PATIENT_NAME } from "../../common/utils/abhaMatch.js";
 
 
 
@@ -30,7 +31,7 @@ export const createPatientController = async (req: userAuthRequest,res: Response
     }
 
     const patient = await createPatientService(
-        result.data.name,
+        result.data.name ?? PENDING_PATIENT_NAME,
         result.data.phone,
         result.data.email,
         facilityId,

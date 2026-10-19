@@ -9,6 +9,7 @@ import { PatientRecord } from "@/pages/PatientRecord";
 import { OpdQueue } from "@/pages/OpdQueue";
 import { SharedProfiles } from "@/pages/SharedProfiles";
 import { StaffPage } from "@/pages/StaffPage";
+import { BedsPage } from "@/pages/BedsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { AuditLogPage } from "@/pages/AuditLogPage";
 
@@ -37,7 +38,7 @@ export default function App() {
 
           {/* Demo modules */}
           <Route path="/opd" element={<OpdQueue />} />
-          <Route path="/beds" element={<OpdQueue />} />
+          <Route path="/beds" element={<BedsPage />} />
           <Route path="/pharmacy" element={<OpdQueue />} />
           <Route path="/billing" element={<OpdQueue />} />
           <Route path="/payroll" element={<OpdQueue />} />

@@ -98,7 +98,11 @@ export const namesMatch = (recordName: string, abhaName: string): boolean => {
   return wholeWordMatches > 0;
 };
 
-const abhaFullName = (abha: AbhaDemographics): string => {
+// Stored as the name of a patient registered from an ABHA number / address alone; replaced by the ABHA's own
+// name once the ABHA is linked, and never compared against the ABHA until then.
+export const PENDING_PATIENT_NAME = "Name pending (from ABHA)";
+
+export const abhaFullName = (abha: AbhaDemographics): string => {
   const joined = [abha.firstName, abha.middleName, abha.lastName].filter((p): p is string => typeof p === "string" && p.trim() !== "").join(" ");
   if (joined) return joined;
   return typeof abha.name === "string" ? abha.name : "";

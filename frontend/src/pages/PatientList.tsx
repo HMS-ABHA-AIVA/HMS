@@ -133,9 +133,37 @@ export function PatientList() {
   }, [session]);
 
   const rows = useMemo(() => {
-    return patients.filter((r) =>
-      (r.name + r.mrn + r.mobile).toLowerCase().includes(q.toLowerCase())
-    );
+    const query = q.trim().toLowerCase();
+    if (!query) return patients;
+    const queryDigits = query.replace(/\D/g, "");
+
+    return patients.filter((r) => {
+      const name = (r.name || "").toLowerCase();
+      const mrn = (r.mrn || "").toLowerCase();
+      const mobile = (r.mobile || "").toLowerCase();
+      const abhaNumber = (r.abhaNum || "").toLowerCase();
+      const abhaAddress = (r.raw.abha?.abhaAddress || "").toLowerCase();
+
+      if (
+        name.includes(query) ||
+        mrn.includes(query) ||
+        mobile.includes(query) ||
+        abhaNumber.includes(query) ||
+        abhaAddress.includes(query)
+      ) {
+        return true;
+      }
+
+      if (queryDigits.length > 0) {
+        const cleanAbha = abhaNumber.replace(/\D/g, "");
+        if (cleanAbha && cleanAbha.includes(queryDigits)) return true;
+
+        const cleanMobile = mobile.replace(/\D/g, "");
+        if (cleanMobile && cleanMobile.includes(queryDigits)) return true;
+      }
+
+      return false;
+    });
   }, [patients, q]);
 
   function handleNavigate(key: string) {
@@ -167,7 +195,7 @@ export function PatientList() {
           </label>
           <input
             className="input"
-            placeholder="Name, MRN or mobile number"
+            placeholder="Name, MRN, mobile, or ABHA number"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -225,28 +253,36 @@ export function PatientList() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td className="cell-name">
-                    <a
-                      style={{ cursor: "pointer" }}
-                      onClick={() => navigate(`/record/${r.id}`)}
-                    >
-                      {r.name}
-                    </a>
-                    <div className="cell-mrn">MRN·{r.mrn}</div>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: "center", padding: "32px 16px", color: "var(--text-dim)" }}>
+                    No patients match "{q}".
                   </td>
-                  <td>{r.age !== undefined ? `${r.age} yrs` : "—"}</td>
-                  <td className="mono">{r.mobile}</td>
-                  <td>
-                    <AbhaCell
-                      r={r}
-                      onAddAbha={(target) => navigate(`/register?patientId=${target.id}`)}
-                    />
-                  </td>
-                  <td>{r.today}</td>
                 </tr>
-              ))}
+              ) : (
+                rows.map((r) => (
+                  <tr key={r.id}>
+                    <td className="cell-name">
+                      <a
+                        style={{ cursor: "pointer" }}
+                        onClick={() => navigate(`/record/${r.id}`)}
+                      >
+                        {r.name}
+                      </a>
+                      <div className="cell-mrn">MRN·{r.mrn}</div>
+                    </td>
+                    <td>{r.age !== undefined ? `${r.age} yrs` : "—"}</td>
+                    <td className="mono">{r.mobile}</td>
+                    <td>
+                      <AbhaCell
+                        r={r}
+                        onAddAbha={(target) => navigate(`/register?patientId=${target.id}`)}
+                      />
+                    </td>
+                    <td>{r.today}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

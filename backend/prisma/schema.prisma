@@ -102,6 +102,65 @@ model AuditLog {
   @@index([facilityId, at])
 }
 
+// occupied (patient in bed) -> dirty (just vacated) -> cleaning (housekeeping started) -> vacant (ready).
+// A vacant bed can be reserved for a patient who is coming; it is then not available to anyone else.
+enum BedStatus {
+  occupied
+  dirty
+  cleaning
+  vacant
+  reserved
+}
+
+model Bed {
+  id         String @id @default(uuid())
+  facilityId String
+
+  ward  String
+  bedNo String
+
+  status      BedStatus @default(vacant)
+  statusSince DateTime  @default(now())
+
+  // Who is in the bed, and under which visit (the visit's own table arrives with the visits stage: plain id for now)
+  patientId   String?
+  encounterId String?
+
+  // Who a reserved bed is being kept for (a registered patient, or just a name), until when, and why
+  reservedPatientId String?
+  reservedFor       String?
+  reservedUntil     DateTime?
+  reservedNote      String?
+
+  facility        Facility @relation(fields: [facilityId], references: [id])
+  patient         Patient? @relation("BedOccupant", fields: [patientId], references: [id], onDelete: SetNull)
+  reservedPatient Patient? @relation("BedReservation", fields: [reservedPatientId], references: [id], onDelete: SetNull)
+  housekeeping    HousekeepingLog[]
+
+  @@unique([facilityId, ward, bedNo])
+  @@index([facilityId, status])
+}
+
+enum HousekeepingAction {
+  discharge_release
+  cleaning_started
+  cleaning_completed
+}
+
+// One line of bed-turnover history (patient left, cleaning started, cleaning done)
+model HousekeepingLog {
+  id         String             @id @default(uuid())
+  facilityId String
+  bedId      String
+  action     HousekeepingAction
+  at         DateTime           @default(now())
+  by         String
+
+  bed Bed @relation(fields: [bedId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, at])
+}
+
 // Per-hospital running numbers (MRN, bill numbers ...): `value` is the last number issued.
 model FacilityCounter {
   facilityId String
@@ -136,6 +195,7 @@ model Facility {
   abhaTransactions AbhaTransaction[]
   patientShares    PatientShare[]
   staff            Staff[]
+  beds             Bed[]
 
   // Facility profile (the HFR id above is the registry id; the HIP id is what the gateway calls this facility)
   hipId        String?
@@ -211,6 +271,8 @@ model Patient {
 
     abha AbhaPatient?
     abhaTransactions AbhaTransaction[]
+    bedsOccupied Bed[] @relation("BedOccupant")
+    bedsReserved Bed[] @relation("BedReservation")
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt

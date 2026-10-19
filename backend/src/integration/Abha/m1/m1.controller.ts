@@ -193,6 +193,7 @@ export const verifyExistingAbhaMobileOtpController = async (req: userAuthRequest
       data: {
         transactionId: resultData.transactionId,
         accounts: resultData.accounts,
+        matchedAbhaNumbers: resultData.matchedAbhaNumbers,
       },
     });
 

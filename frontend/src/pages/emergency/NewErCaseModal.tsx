@@ -37,8 +37,37 @@ export function NewErCaseModal({ onClose }: { onClose: () => void }) {
 
   const matches = useMemo(() => {
     if (!query.trim()) return [];
-    const q = query.toLowerCase();
-    return patients.filter((p) => p.name.toLowerCase().includes(q) || p.mrn.toLowerCase().includes(q) || p.phone.includes(q)).slice(0, 6);
+    const q = query.trim().toLowerCase();
+    const queryDigits = q.replace(/\D/g, "");
+    return patients
+      .filter((p) => {
+        const name = (p.name || "").toLowerCase();
+        const mrn = (p.mrn || "").toLowerCase();
+        const phone = (p.phone || "").toLowerCase();
+        const abhaNumber = (p.abhaNumber || "").toLowerCase();
+        const abhaAddress = (p.abhaAddress || "").toLowerCase();
+
+        if (
+          name.includes(q) ||
+          mrn.includes(q) ||
+          phone.includes(q) ||
+          abhaNumber.includes(q) ||
+          abhaAddress.includes(q)
+        ) {
+          return true;
+        }
+
+        if (queryDigits.length > 0) {
+          const cleanAbha = abhaNumber.replace(/\D/g, "");
+          if (cleanAbha && cleanAbha.includes(queryDigits)) return true;
+
+          const cleanPhone = phone.replace(/\D/g, "");
+          if (cleanPhone && cleanPhone.includes(queryDigits)) return true;
+        }
+
+        return false;
+      })
+      .slice(0, 6);
   }, [patients, query]);
 
   const canSubmit = mode === 'existing' ? !!selectedPatientId : name.trim().length >= 2 && age && /^\d{10}$/.test(phone);

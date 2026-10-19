@@ -83,7 +83,7 @@ export function SharedProfiles() {
       const res = await registerSharedProfile(share.id, phoneOverride ? { phone: phoneOverride } : {});
       navigate(`/record/${res.data.patientId}`);
     } catch (err) {
-      if (err instanceof ApiError && (err.code === "PHONE_REQUIRED" || err.code === "PHONE_IN_USE")) {
+      if (err instanceof ApiError && err.code === "PHONE_REQUIRED") {
         setNeedsPhone({ id: share.id, message: err.message });
         setPhone("");
       } else {

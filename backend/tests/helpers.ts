@@ -56,6 +56,8 @@ export async function removeQaHospital(facilityId: string) {
   const patients = await prisma.patient.findMany({ where: { facilityId }, select: { id: true } });
   const patientIds = patients.map((p) => p.id);
 
+  await prisma.housekeepingLog.deleteMany({ where: { facilityId } });
+  await prisma.bed.deleteMany({ where: { facilityId } });
   await prisma.abhaTransaction.deleteMany({ where: { facilityId } });
   await prisma.abhaPatient.deleteMany({ where: { patientId: { in: patientIds } } });
   await prisma.patientShare.deleteMany({ where: { facilityId } });

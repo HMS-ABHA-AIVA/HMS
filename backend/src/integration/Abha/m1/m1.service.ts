@@ -2,7 +2,7 @@ import { prisma } from "../../../config/db.js";
 import { ApiError } from "../../../common/errors/appError.js";
 import { generateAbdmSessionToken } from "../../../common/client/facility.client.js";
 import { decrypt, encryptWithAbdmPublicKey } from "../../../common/utils/encryption.js";
-import { findAbhaMismatches, parseAbhaDob, type AbhaDemographics } from "../../../common/utils/abhaMatch.js";
+import { abhaFullName, findAbhaMismatches, parseAbhaDob, PENDING_PATIENT_NAME, type AbhaDemographics } from "../../../common/utils/abhaMatch.js";
 import type { AbhaTokenKind } from "../../../common/utils/abdmCookies.js";
 import { getAbdmPublicKey, requestAadhaarOtp, aadharCreationClient, requestExistingAbhaAadhaarOtp, verifyExistingAbhaAadhaarOtp, getExistingAbhaProfile, requestExistingAbhaMobileOtp, verifyExistingAbhaMobileOtp, verifyExistingAbhaUser, generateAbhaQr, getAbhaCard, requestEnrolMobileOtp, verifyEnrolMobileOtp, getAbhaAddressSuggestions, createAbhaAddress, requestAbhaNumberOtp, verifyAbhaNumberOtp, ABHA_ENROLLMENT_CONSENT, HOSPITAL_LINK_CONSENT, getCmId, requestProfileContactOtp, verifyProfileContactOtp, abhaLogout, searchAbhaAddress, requestAbhaAddressOtp, verifyAbhaAddressOtp, getPhrProfile, getPhrCard, type AbhaLoginChannel, type ProfileContactType } from "../../../common/client/abdm.client.js";
 
@@ -94,7 +94,9 @@ const linkAbhaToPatient = async (
     throw new ApiError(404, "Patient not found", [], "PATIENT_NOT_FOUND");
   }
 
-  const mismatches = findAbhaMismatches(patient, demographics);
+  // A patient registered from an ABHA number / address has no name of their own yet, so there is nothing to compare.
+  const namePending = patient.name === PENDING_PATIENT_NAME;
+  const mismatches = findAbhaMismatches(patient, demographics).filter((field) => !(namePending && field === "name"));
   if (mismatches.length > 0) {
     await setTransactionStatus(transactionId, "FAILED");
     const fields = mismatches.join(" and ");
@@ -131,6 +133,10 @@ const linkAbhaToPatient = async (
   });
 
   await fillPatientFromAbha(patientId, patient, demographics);
+  if (namePending) {
+    const abhaName = cleanText(abhaFullName(demographics), 100);
+    if (abhaName) await prisma.patient.update({ where: { id: patientId }, data: { name: abhaName } });
+  }
 
   return { ...abhaPatient, mobileMatchesRecord: mobileMatchesRecord(patient.phone, demographics.mobile) };
 };
@@ -547,12 +553,22 @@ export const verifyExistingAbhaMobileOtpService = async (transactionId: string, 
     throw new ApiError(404, "No ABHA accounts were found for this mobile number. Check the number, or create a new ABHA.", [], "ABHA_NOT_FOUND");
   }
 
+  // One mobile number can hold several ABHAs (a family sharing a phone). The ones whose name / date of birth agree
+  // with the patient being registered are flagged so the screen can pick the right one without asking.
+  const patient = await prisma.patient.findUnique({ where: { id: transaction.patientId }, select: { name: true, dateOfBirth: true } });
+  const accounts = abdmResponse.accounts as (AbhaDemographics & { ABHANumber: string })[];
+  const matchedAbhaNumbers =
+    patient && patient.name !== PENDING_PATIENT_NAME
+      ? accounts.filter((account) => abhaFullName(account) !== "" && findAbhaMismatches(patient, account).length === 0).map((account) => account.ABHANumber)
+      : [];
+
   return {
     transactionId: transaction.id,
     txnId: abdmResponse.txnId,
     token: abdmResponse.token as string,
     expiresIn: abdmResponse.expiresIn as number | undefined,
-    accounts: abdmResponse.accounts,
+    accounts,
+    matchedAbhaNumbers,
     message: abdmResponse.message,
   };
 };

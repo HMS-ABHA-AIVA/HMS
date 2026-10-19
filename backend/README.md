@@ -108,7 +108,7 @@ ABDM then calls our bridge; we answer 200, store the profile for up to 30 minute
 | `POST` | `/api/v3/hip/patient/share` | ABDM bearer JWT (RS256, verified against the gateway keys), `X-HIP-ID` = facility HFR id | The callback ABDM makes on the bridge URL. Rejected with 401/403 and logged (`ABDM_CALLBACK_REJECTED`) unless all checks pass. |
 | `GET` | `/api/abha/shares` | Staff | Shared profiles still waiting (valid token), oldest first. Includes the existing patient when the ABHA is already linked. |
 | `GET` | `/api/abha/shares/config?environment=` | Staff | HFR id and QR host for printing counter QR codes. |
-| `POST` | `/api/abha/shares/:shareId/register` | Staff | body `{ phone? }`. Create the patient and link the ABHA (or return the existing patient). `PHONE_REQUIRED` / `PHONE_IN_USE` ask for a mobile number. |
+| `POST` | `/api/abha/shares/:shareId/register` | Staff | body `{ phone? }`. Create the patient and link the ABHA (or return the existing patient). `PHONE_REQUIRED` asks for a mobile number (a number may be shared by several patients). |
 | `POST` | `/api/abha/shares/:shareId/dismiss` | Staff | Delete a shared profile without registering it. |
 
 Setup (once per environment, and again whenever the public URL changes): the backend must be reachable on public HTTPS (a deployed URL, or a tunnel for

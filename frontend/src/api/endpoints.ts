@@ -74,7 +74,7 @@ export interface BackendPatient {
   createdAt: string;
 }
 
-export const createPatient = (body: { name: string; phone: string; email?: string; dateOfBirth?: string }) =>
+export const createPatient = (body: { name?: string; phone: string; email?: string; dateOfBirth?: string }) =>
   post<Envelope<BackendPatient>>('/patient/create', body);
 
 /** A patient as returned by GET /patient, with their ABHA record when linked. */
@@ -210,7 +210,7 @@ export interface AbhaAccountItem {
 }
 
 export const confirmAbhaMobileOtp = (body: { transactionId: string; otp: string; environment: AbdmEnvironment }) =>
-  post<Envelope<{ transactionId: string; txnId: string; token: string; accounts: AbhaAccountItem[] }>>('/abha/verify/mobile/confirm', body);
+  post<Envelope<{ transactionId: string; txnId: string; token: string; accounts: AbhaAccountItem[]; matchedAbhaNumbers?: string[] }>>('/abha/verify/mobile/confirm', body);
 
 export const verifyAbhaMobileUser = (body: { abhaNumber: string; transactionId: string; environment: AbdmEnvironment }) =>
   post<Envelope<{
@@ -342,6 +342,45 @@ export const listAuditLog = (params: { limit?: number; before?: string; search?:
   return get<Envelope<AuditEntry[]>>(`/audit-log${qs ? `?${qs}` : ''}`);
 };
 
+// ---- Beds and housekeeping ----------------------------------------------------------------------------------------
+
+export type BedStatus = 'occupied' | 'dirty' | 'cleaning' | 'vacant' | 'reserved';
+
+export interface Bed {
+  id: string;
+  ward: string;
+  bedNo: string;
+  status: BedStatus;
+  statusSince: string;
+  patient: { id: string; name: string; mrn: string | null } | null;
+  encounterId: string | null;
+  reservedPatient: { id: string; name: string; mrn: string | null } | null;
+  reservedFor: string | null;
+  reservedUntil: string | null;
+  reservedNote: string | null;
+  /** The reservation's time has passed; the bed can still be taken and should be cleared. */
+  reservationLapsed: boolean;
+}
+
+export interface HousekeepingEntry {
+  id: string;
+  bedId: string;
+  ward: string;
+  bedNo: string;
+  action: 'discharge_release' | 'cleaning_started' | 'cleaning_completed';
+  at: string;
+  by: string;
+}
+
+export const listBeds = () => get<Envelope<Bed[]>>('/beds');
+export const addBed = (body: { ward: string; bedNo: string }) => post<Envelope<Bed>>('/beds', body);
+export const reserveBed = (id: string, body: { patientId?: string; reservedFor?: string; until?: string; note?: string }) =>
+  post<Envelope<Bed>>(`/beds/${id}/reserve`, body);
+export const clearBedReservation = (id: string) => post<Envelope<Bed>>(`/beds/${id}/clear-reservation`);
+export const startBedCleaning = (id: string) => post<Envelope<Bed>>(`/beds/${id}/start-cleaning`);
+export const completeBedCleaning = (id: string) => post<Envelope<Bed>>(`/beds/${id}/complete-cleaning`);
+export const listHousekeepingLog = (limit = 50) => get<Envelope<HousekeepingEntry[]>>(`/beds/housekeeping-log?limit=${limit}`);
+
 // ---- Dashboard counts ----------------------------------------------------------------------------------------
 
 export interface DashboardData {
@@ -382,7 +421,7 @@ export const listSharedProfiles = () => get<Envelope<SharedProfile[]>>('/abha/sh
 export const getShareConfig = (environment: AbdmEnvironment) =>
   get<Envelope<{ hipId: string; qrBaseUrl: string; validityMinutes: number }>>(`/abha/shares/config?environment=${environment}`);
 
-/** `phone` is only needed when the shared profile has no usable mobile number or another patient already uses it. */
+/** `phone` is only needed when the shared profile has no usable mobile number. */
 export const registerSharedProfile = (shareId: string, body: { phone?: string } = {}) =>
   post<Envelope<{ patientId: string; created: boolean; abhaLinked: boolean }>>(`/abha/shares/${shareId}/register`, body);
 

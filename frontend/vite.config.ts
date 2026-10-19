@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     // "@/foo" in an import means "src/foo"
     resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
-    server: { proxy },
-    preview: { proxy },
+    server: { host: '0.0.0.0', port: 5180, proxy },
+    preview: { host: '0.0.0.0', port: 5180, proxy },
   }
 })

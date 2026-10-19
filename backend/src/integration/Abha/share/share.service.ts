@@ -322,10 +322,6 @@ export const registerShareService = async (shareId: string, facilityId: string, 
   if (!phone) {
     throw new ApiError(400, "The shared profile has no usable mobile number. Enter the patient's mobile number to register them.", [], "PHONE_REQUIRED");
   }
-  const phoneTaken = await prisma.patient.findFirst({ where: { phone, facilityId }, select: { id: true } });
-  if (phoneTaken) {
-    throw new ApiError(409, "Another patient already has this mobile number. Open that patient, or enter a different number for this one.", [], "PHONE_IN_USE");
-  }
 
   if (share.abhaNumber) {
     const owner = await prisma.abhaPatient.findUnique({ where: { abhaNumber: share.abhaNumber }, select: { id: true } });

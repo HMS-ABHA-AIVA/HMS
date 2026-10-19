@@ -3,10 +3,10 @@ import "dotenv/config";
 import app from "./app.js";
 import { purgeExpiredShares } from "./integration/Abha/share/share.service.js";
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT} (0.0.0.0)`);
 });
 
 // Shared profiles are personal data: delete the unclaimed, expired ones even when no staff screen is open.

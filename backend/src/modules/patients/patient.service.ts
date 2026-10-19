@@ -6,19 +6,7 @@ import { nextMrn } from "../../common/utils/counters.js";
 const toDateOnly = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
 
 export const createPatientService = async (name: string,phone: string,email: string | undefined,facilityId: string,dateOfBirth?: string) => {
-     const existingPatient = await prisma.patient.findFirst({
-        where: {
-            phone,
-            facilityId
-        }
-    });
-
-    if (existingPatient) {
-        throw new ApiError(
-            409,
-            "Patient with this phone number already exists"
-        );
-    }
+    // A mobile number is not unique: one family often shares a single phone.
     const patient = await prisma.patient.create({
         data: {
             name,
@@ -105,13 +93,6 @@ export const updatePatientService = async (
 
     if (!patient) {
         throw new ApiError(404, "Patient not found", [], "PATIENT_NOT_FOUND");
-    }
-
-    if (changes.phone && changes.phone !== patient.phone) {
-        const taken = await prisma.patient.findFirst({ where: { phone: changes.phone, facilityId, NOT: { id: patientId } } });
-        if (taken) {
-            throw new ApiError(409, "Another patient with this phone number already exists");
-        }
     }
 
     // Only the fields that were sent are touched; "" clears an optional text field.

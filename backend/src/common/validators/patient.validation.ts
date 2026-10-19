@@ -14,11 +14,13 @@ const dateOfBirth = z
 export const createPatientSchema = z.object({
 
     // Whitelist: letters in any script, spaces and . ' - (rules out control characters, markup and digits).
-    // Trim first so the length limits apply to what is stored.
+    // Trim first so the length limits apply to what is stored. Left out when the patient is registered from an
+    // ABHA number / address: the name then comes from the ABHA once it is linked.
     name: z.string().trim()
         .min(2, "Patient name must be at least 2 characters")
         .max(100, "Patient name cannot exceed 100 characters")
-        .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'’\-]*$/u, "Patient name may contain only letters, spaces and . ' -"),
+        .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'’\-]*$/u, "Patient name may contain only letters, spaces and . ' -")
+        .optional(),
 
     phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
 
