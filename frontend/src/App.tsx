@@ -8,6 +8,9 @@ import { RegisterPatient } from "@/pages/RegisterPatient";
 import { PatientRecord } from "@/pages/PatientRecord";
 import { OpdQueue } from "@/pages/OpdQueue";
 import { SharedProfiles } from "@/pages/SharedProfiles";
+import { StaffPage } from "@/pages/StaffPage";
+import { SettingsPage } from "@/pages/SettingsPage";
+import { AuditLogPage } from "@/pages/AuditLogPage";
 
 export default function App() {
   return (
@@ -26,6 +29,9 @@ export default function App() {
           <Route path="/registration" element={<PatientList />} />
           <Route path="/register" element={<RegisterPatient />} />
           <Route path="/shared-profiles" element={<SharedProfiles />} />
+          <Route path="/staff" element={<StaffPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/audit-log" element={<AuditLogPage />} />
           <Route path="/record/:patientId" element={<PatientRecord />} />
           <Route path="/emr/:patientId" element={<PatientRecord />} />
 

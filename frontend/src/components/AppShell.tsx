@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuthStore } from "@/store/useAuthStore";
+import { ROLE_LABELS, type StaffRole } from "@/lib/session";
 
-type Item = { key: string; label: string; demo?: boolean; group?: string };
+// `roles`: who sees the entry (left out = everyone). The server enforces the same rules; this only keeps the menu tidy.
+type Item = { key: string; label: string; demo?: boolean; group?: string; roles?: StaffRole[] };
 
 const STAFF_NAV: Item[] = [
   { key: "dashboard", label: "Dashboard", group: "Front desk" },
@@ -12,7 +16,21 @@ const STAFF_NAV: Item[] = [
   { key: "billing", label: "Billing", demo: true },
   { key: "payroll", label: "Payroll", demo: true },
   { key: "roster", label: "Roster", demo: true },
+  { key: "staff", label: "Staff", group: "Administration", roles: ["admin"] },
+  { key: "settings", label: "Hospital settings", roles: ["admin"] },
+  { key: "audit", label: "Audit log", roles: ["admin"] },
 ];
+
+// Menu entries that open a real screen. Entries without a path (the demo modules) do nothing.
+const PATHS: Record<string, string> = {
+  dashboard: "/",
+  registration: "/registration",
+  shared: "/shared-profiles",
+  opd: "/opd",
+  staff: "/staff",
+  settings: "/settings",
+  audit: "/audit-log",
+};
 
 export function AppShell({
   active,
@@ -35,6 +53,18 @@ export function AppShell({
   onLogout?: () => void;
   children: ReactNode;
 }) {
+  const navigate = useNavigate();
+  const session = useAuthStore((s) => s.session);
+  // Sessions saved before roles existed belonged to administrators.
+  const role: StaffRole = session?.kind === "staff" ? (session.role ?? "admin") : "admin";
+  const visible = nav.filter((it) => !it.roles || it.roles.includes(role));
+
+  function go(key: string) {
+    const path = PATHS[key];
+    if (path) navigate(path);
+    else onNavigate?.(key);
+  }
+
   return (
     <div className="osh-app">
       <aside className="osh-sidebar">
@@ -44,12 +74,12 @@ export function AppShell({
         </div>
         <span className="osh-env">{env}</span>
         <nav className="osh-nav">
-          {nav.map((it) => (
+          {visible.map((it) => (
             <div key={it.key}>
               {it.group && <div className="osh-nav-group">{it.group}</div>}
               <a
                 className={`osh-nav-item${it.demo ? " demo" : ""}${active === it.key ? " active" : ""}`}
-                onClick={() => onNavigate?.(it.key)}
+                onClick={() => go(it.key)}
               >
                 {it.label}
                 {it.demo && <span className="osh-demo-tag"> (demo)</span>}
@@ -60,6 +90,7 @@ export function AppShell({
         <div className="osh-side-foot">
           <div className="nm">{staffName}</div>
           <div className="em">{staffEmail}</div>
+          <div className="em">{ROLE_LABELS[role]}</div>
           <button className="osh-logout" onClick={onLogout}>Log out</button>
         </div>
       </aside>

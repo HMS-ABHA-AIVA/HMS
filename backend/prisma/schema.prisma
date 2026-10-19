@@ -21,16 +21,95 @@ model User{
   facilityId String
   facility Facility @relation(fields: [facilityId], references: [id])
   refreshTokens UserRefreshToken[]
-  // role 
+  // What this login may do. Everyone who existed before roles were introduced is an admin, as they effectively were.
+  role StaffRole @default(admin)
+  // An inactive login cannot sign in and is refused on role-protected routes.
+  active Boolean @default(true)
+  staff Staff?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-// enum userRole{
-//   ADMIN
-//   RECEPTIONIST
-//   DOCTOR
-// }
+enum StaffRole {
+  front_office
+  doctor
+  nurse
+  pharmacist
+  biller
+  housekeeping
+  lab
+  admin
+}
+
+enum EmploymentType {
+  salaried
+  visiting_fee
+}
+
+// A member of staff. Not everyone has a login (a visiting doctor may be listed without one): userId is set when they do.
+// `role` here is the one the hospital sees; when a login exists the same role is kept on the User (see staff.service.ts).
+model Staff {
+  id         String @id @default(uuid())
+  facilityId String
+  userId     String? @unique
+
+  name       String
+  role       StaffRole
+  department String
+
+  // Health Professional Registry id (ABDM)
+  hprId      String?
+
+  employmentType  EmploymentType @default(salaried)
+  monthlySalary   Decimal? @db.Decimal(12, 2)
+  feePerConsult   Decimal? @db.Decimal(12, 2)
+  // What a patient pays to see this doctor, when set for this doctor
+  consultationFee Decimal? @db.Decimal(12, 2)
+  // Only the last four digits are ever stored
+  bankAccountLast4 String?
+  dateOfJoining   DateTime @default(now()) @db.Date
+  active          Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([facilityId, role])
+}
+
+// The hospital's own settings (fees, GSTIN, print text ...). Only values that were changed are stored.
+model HospitalSetting {
+  facilityId String
+  key        String
+  value      String
+  updatedAt  DateTime @updatedAt
+
+  @@id([facilityId, key])
+}
+
+// Append-only record of changes for the whole hospital (NABH / ABDM audit readiness). ABHA actions also have their own
+// metadata-only trail in AbhaAuditLog.
+model AuditLog {
+  id         String   @id @default(uuid())
+  facilityId String
+  at         DateTime @default(now())
+  actor      String
+  action     String
+  detail     String   @default("")
+
+  @@index([facilityId, at])
+}
+
+// Per-hospital running numbers (MRN, bill numbers ...): `value` is the last number issued.
+model FacilityCounter {
+  facilityId String
+  key        String
+  value      Int
+
+  @@id([facilityId, key])
+}
 model UserRefreshToken {
   id         String   @id @default(cuid())
   tokenHash  String
@@ -56,6 +135,18 @@ model Facility {
   refreshTokens FacilityRefreshToken[]
   abhaTransactions AbhaTransaction[]
   patientShares    PatientShare[]
+  staff            Staff[]
+
+  // Facility profile (the HFR id above is the registry id; the HIP id is what the gateway calls this facility)
+  hipId        String?
+  facilityType String?
+  address      String?
+  state        String?
+  district     String?
+  pincode      String?
+  phone        String?
+  latitude     Decimal? @db.Decimal(9, 6)
+  longitude    Decimal? @db.Decimal(9, 6)
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -111,6 +202,11 @@ model Patient {
 
     facilityId String
 
+    // Medical record number, unique within the hospital ("MRN-10001"); issued from FacilityCounter
+    mrn String?
+    allergies   String[] @default([])
+    problemList String[] @default([])
+
     facility Facility @relation(fields: [facilityId], references: [id])
 
     abha AbhaPatient?
@@ -121,6 +217,7 @@ model Patient {
 
     @@index([facilityId])
     @@index([phone])
+    @@unique([facilityId, mrn])
 }
 
 model AbhaPatient {

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "dev": "tsx watch src/index.ts",
     "build": "npx prisma generate && tsc -p tsconfig.json",
     "start": "node dist/src/index.js"

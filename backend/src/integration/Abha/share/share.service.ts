@@ -6,6 +6,7 @@ import { decrypt } from "../../../common/utils/encryption.js";
 import { generateAbdmSessionToken } from "../../../common/client/facility.client.js";
 import { fetchGatewayCerts, sendPatientShareReply } from "../../../common/client/gateway.client.js";
 import { logSecurityEvent } from "../../../common/utils/securityLog.js";
+import { nextMrn } from "../../../common/utils/counters.js";
 import { counterCodeSchema, type InboundShare } from "../../../common/validators/share.validator.js";
 import { cleanText, formatAbhaNumber, normalizeGender } from "../m1/m1.service.js";
 
@@ -338,6 +339,7 @@ export const registerShareService = async (shareId: string, facilityId: string, 
         name: cleanText(share.name, 100) ?? share.name,
         phone,
         facilityId,
+        mrn: await nextMrn(tx, facilityId),
         dateOfBirth: dateOfBirthOf(share),
         ...(gender ? { gender } : {}),
         address: cleanText([share.addressLine, share.district, share.state, share.pincode].filter(Boolean).join(", ")) ?? null,

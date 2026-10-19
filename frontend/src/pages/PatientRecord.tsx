@@ -187,7 +187,7 @@ export function PatientRecord() {
     else if (key === "opd") navigate("/opd");
   }
 
-  const mrn = patient?.id ? patient.id.slice(0, 6).toUpperCase() : "—";
+  const mrn = patient?.mrn ?? (patient?.id ? patient.id.slice(0, 6).toUpperCase() : "—");
   const pName = patient?.name || "Patient not found";
   const isLinked = Boolean(patient?.abha);
   const abhaNumber = patient?.abha?.abhaNumber || liveProfile?.ABHANumber || "—";

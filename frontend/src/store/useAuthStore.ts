@@ -23,7 +23,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signInStaff: async (email, password) => {
     const { data } = await loginStaff({ email, password });
-    const session: Session = { kind: 'staff', id: data.id, name: data.name, email: data.email };
+    const session: Session = { kind: 'staff', id: data.id, name: data.name, email: data.email, role: data.role };
     saveSession(session);
     resetAbdmSession();
     useHospitalStore.getState().signInAs(session);

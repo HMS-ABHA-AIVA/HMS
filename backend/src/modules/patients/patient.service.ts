@@ -1,5 +1,6 @@
 import { prisma } from "../../config/db.js";
 import { ApiError } from "../../common/errors/appError.js";
+import { nextMrn } from "../../common/utils/counters.js";
 
 // DATE column <-> "YYYY-MM-DD" (no time zone shifts)
 const toDateOnly = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
@@ -24,7 +25,8 @@ export const createPatientService = async (name: string,phone: string,email: str
             phone,
             email : email ?? null,
             dateOfBirth: dateOfBirth ? new Date(`${dateOfBirth}T00:00:00.000Z`) : null,
-            facilityId
+            facilityId,
+            mrn: await nextMrn(prisma, facilityId),
         }
     });
 
@@ -47,6 +49,9 @@ export const getAllPatientsService = async (facilityId: string, limit = 500, pag
 
     return patients.map((patient) => ({
     id: patient.id,
+    mrn: patient.mrn,
+    allergies: patient.allergies,
+    problemList: patient.problemList,
     name: patient.name,
     phone: patient.phone,
     email: patient.email,
@@ -94,7 +99,7 @@ export const getPatientTransactionsService = async (patientId: string,facilityId
 export const updatePatientService = async (
     patientId: string,
     facilityId: string,
-    changes: { phone?: string | undefined; email?: string | undefined; address?: string | undefined; stateName?: string | undefined; districtName?: string | undefined },
+    changes: { phone?: string | undefined; email?: string | undefined; address?: string | undefined; stateName?: string | undefined; districtName?: string | undefined; allergies?: string[] | undefined; problemList?: string[] | undefined },
 ) => {
     const patient = await prisma.patient.findFirst({ where: { id: patientId, facilityId } });
 
@@ -110,7 +115,9 @@ export const updatePatientService = async (
     }
 
     // Only the fields that were sent are touched; "" clears an optional text field.
-    const data: { phone?: string; email?: string | null; address?: string | null; stateName?: string | null; districtName?: string | null } = {};
+    const data: { phone?: string; email?: string | null; address?: string | null; stateName?: string | null; districtName?: string | null; allergies?: string[]; problemList?: string[] } = {};
+    if (changes.allergies !== undefined) data.allergies = changes.allergies;
+    if (changes.problemList !== undefined) data.problemList = changes.problemList;
     if (changes.phone !== undefined) data.phone = changes.phone;
     if (changes.email !== undefined) data.email = changes.email === "" ? null : changes.email;
     if (changes.address !== undefined) data.address = changes.address === "" ? null : changes.address;

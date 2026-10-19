@@ -46,6 +46,7 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
                 id: loggedInAdmin.user.id,
                 email: loggedInAdmin.user.email,
                 name: loggedInAdmin.user.name,
+                role: loggedInAdmin.user.role,
             }
         });
     } catch (error) {

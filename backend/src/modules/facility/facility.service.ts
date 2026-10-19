@@ -153,12 +153,26 @@ export const createAdminService = async (facilityId: string, data : z.infer<type
 
     const hashedPassword = await bcrypt.hash(data.password, 12);
 
-    return await prisma.user.create({
-        data: {
-            name: data.name,
-            email: data.email,
-            passwordHash: hashedPassword,
-            facilityId: facilityId,
-        },
+    // The login and its staff record are created together.
+    return await prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({
+            data: {
+                name: data.name,
+                email: data.email,
+                passwordHash: hashedPassword,
+                facilityId: facilityId,
+                role: data.role,
+            },
+        });
+        await tx.staff.create({
+            data: {
+                facilityId,
+                userId: user.id,
+                name: data.name,
+                role: data.role,
+                department: data.department ?? (data.role === "admin" ? "Administration" : "General"),
+            },
+        });
+        return user;
     });
 }    

@@ -200,6 +200,7 @@ export const createAdmin = async (req: authRequest, res: Response, next: NextFun
         name: user.name,
         email: user.email,
         facilityId: user.facilityId,
+        role: user.role,
       }
     });
 

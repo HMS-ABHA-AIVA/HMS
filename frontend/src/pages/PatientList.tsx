@@ -107,7 +107,7 @@ export function PatientList() {
           return {
             id: p.id,
             name: p.name,
-            mrn: p.id.slice(0, 6).toUpperCase(),
+            mrn: p.mrn ?? p.id.slice(0, 6).toUpperCase(),
             age: p.dateOfBirth ? ageFromDob(p.dateOfBirth) : undefined,
             mobile: p.phone,
             abha: isLinked ? "linked" : "not",

@@ -1,5 +1,6 @@
 import type { Request,Response,NextFunction } from "express"
 import jwt from "jsonwebtoken"
+import type { StaffRole } from "@prisma/client"
 import {ApiError} from "../errors/appError.js"
 import { logSecurityEvent } from "../utils/securityLog.js"
 
@@ -8,6 +9,8 @@ export interface userAuthRequest extends Request {
         id : string
         email : string
         facilityId : string
+        // Filled in by requireRole (read from the database), not carried in the token
+        role?: StaffRole
     }
 }
 

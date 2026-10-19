@@ -11,6 +11,10 @@ import facilityRouter from "./modules/facility/facility.routes.js";
 import patientRouter from "./modules/patients/patient.routes.js";
 import abdmRouter from "./integration/Abha/m1/m1.routes.js";
 import adminRouter from "./modules/users/admin/admin.routes.js";
+import staffRouter from "./modules/staff/staff.routes.js";
+import settingsRouter from "./modules/settings/settings.routes.js";
+import profileRouter from "./modules/facility/profile.routes.js";
+import auditRouter from "./modules/audit/audit.routes.js";
 import dashboardRouter from "./modules/dashboard/dashboard.routes.js";
 import { bridgeRouter, shareStaffRouter } from "./integration/Abha/share/share.routes.js";
 
@@ -51,6 +55,12 @@ app.use("/api/user/admin",adminRouter);
 
 //patients
 app.use("/api/patient",patientRouter)
+
+//hospital foundation: staff and roles, settings, facility profile, audit trail
+app.use("/api/staff", staffRouter);
+app.use("/api/settings", settingsRouter);
+app.use("/api/facility-profile", profileRouter);
+app.use("/api/audit-log", auditRouter);
 
 //dashboard counts
 app.use("/api/dashboard", dashboardRouter);

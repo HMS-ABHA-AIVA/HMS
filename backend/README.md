@@ -39,6 +39,26 @@ applicable) `data`. Errors contain a message.
 | `GET` | `/api/patient` | Staff/admin | None | Return patients belonging to the authenticated user's facility, including their ABHA record when present.|
 | `GET` | `/api/patient/:patientId/transactions` | Staff/admin | None | Return that patient's ABHA transactions for the authenticated facility, newest first.|
 
+### Staff, roles, settings, facility profile, audit log
+
+Every staff login has a **role**: `front_office`, `doctor`, `nurse`, `pharmacist`, `biller`, `housekeeping`, `lab` or `admin`. Logins that existed before roles are admins.
+Role-protected routes read the role from the database on every call, so a role change or deactivation takes effect at once.
+All these routes need a staff sign-in; the role column says who may change things.
+
+| Method | Endpoint | Role | Purpose |
+|---|---|---|---|
+| `GET` | `/api/staff?role=` | any | Staff list. Pay, bank and login details are shown to admins only. |
+| `GET` | `/api/staff/:id` | any | One staff member. |
+| `POST` | `/api/staff` | admin | Add staff, optionally with a login (`login: { email, password }`). |
+| `PATCH` | `/api/staff/:id` | admin | Change role, department, HPR id, fees, `active`. The login follows (role, on/off). You cannot deactivate yourself or drop your own admin role. |
+| `PUT` / `DELETE` | `/api/staff/:id/login` | admin | Give or change a login (ends that person's sessions) / remove it. |
+| `GET` / `PUT` | `/api/settings` | any / admin | Hospital settings: fees, GSTIN, bed-day hour, print text. Unset values use defaults. |
+| `GET` / `PUT` | `/api/facility-profile` | any / admin | Hospital name, HFR id, HIP id, address, location. |
+| `GET` | `/api/audit-log?limit=&before=&search=` | admin | The hospital audit trail, newest first (no passwords, OTPs or Aadhaar numbers). |
+
+Patients now carry a per-hospital **MRN** (`MRN-10001` ...), `allergies` and `problemList`. `npm test` runs the backend tests against a running backend
+(they create and remove a throwaway hospital of their own).
+
 ### Dashboard
 
 | Method | Endpoint | Auth | Purpose |

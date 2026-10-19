@@ -39,4 +39,7 @@ export const createAdminSchema = z.object({
   name : personName,
   email,
   password : newPasswordSchema,
+  // What this login may do. Left out, the new login is an administrator, as every staff login was before roles existed.
+  role: z.enum(["front_office", "doctor", "nurse", "pharmacist", "biller", "housekeeping", "lab", "admin"]).default("admin"),
+  department: z.string().trim().min(1).max(80).optional(),
 }).superRefine(rejectWeakPassword)

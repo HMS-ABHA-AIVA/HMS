@@ -23,7 +23,7 @@ export function setSessionExpiredHandler(handler: () => void) {
   onSessionExpired = handler;
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -57,6 +57,8 @@ async function request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?:
 
 export const post = <T>(path: string, body?: unknown) => request<T>('POST', path, body);
 export const patch = <T>(path: string, body?: unknown) => request<T>('PATCH', path, body);
+export const put = <T>(path: string, body?: unknown) => request<T>('PUT', path, body);
+export const del = <T>(path: string) => request<T>('DELETE', path);
 export const get = <T>(path: string) => request<T>('GET', path);
 
 export async function getBlob(path: string): Promise<Blob> {

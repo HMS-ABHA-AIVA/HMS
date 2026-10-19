@@ -1,7 +1,8 @@
 // Every backend route the frontend calls, in one place. Paths follow the backend
 // README's API table; request/response shapes follow its routes and zod validators.
 // If the backend changes, this is the file to update.
-import { get, getBlob, patch, post } from '@/api/client';
+import { del, get, getBlob, patch, post, put } from '@/api/client';
+import type { StaffRole } from '@/lib/session';
 
 export type AbdmEnvironment = 'SANDBOX' | 'PRODUCTION';
 
@@ -42,6 +43,7 @@ export interface StaffInfo {
   id: string;
   name: string;
   email: string;
+  role: StaffRole;
 }
 
 export const loginStaff = (body: { email: string; password: string }) =>
@@ -54,6 +56,10 @@ export const logoutStaff = (environment?: AbdmEnvironment) => post<Envelope<neve
 
 export interface BackendPatient {
   id: string;
+  /** Medical record number, e.g. "MRN-10001". */
+  mrn?: string | null;
+  allergies?: string[];
+  problemList?: string[];
   name: string;
   phone: string;
   email: string | null;
@@ -79,7 +85,7 @@ export interface BackendPatientWithAbha extends BackendPatient {
 /** Staff may edit these only. Name, date of birth and gender are fixed once verified against an ABHA. */
 export const updatePatient = (
   patientId: string,
-  body: { phone?: string; email?: string; address?: string; stateName?: string; districtName?: string },
+  body: { phone?: string; email?: string; address?: string; stateName?: string; districtName?: string; allergies?: string[]; problemList?: string[] },
 ) => patch<Envelope<BackendPatientWithAbha>>(`/patient/${patientId}`, body);
 
 export const listPatients = () => get<Envelope<BackendPatientWithAbha[]>>('/patient');
@@ -240,6 +246,101 @@ export const getAbhaQrCodeBlob = (patientId: string, environment: AbdmEnvironmen
 
 export const getAbhaCardBlob = (patientId: string, environment: AbdmEnvironment = 'SANDBOX') =>
   getBlob(`/abha/profile/card?patientId=${encodeURIComponent(patientId)}&environment=${environment}`);
+
+// ---- Staff, settings, facility profile, audit log (administrators change them) ---------------------------------------
+
+export interface StaffMember {
+  id: string;
+  name: string;
+  role: StaffRole;
+  department: string;
+  hprId: string | null;
+  employmentType: 'salaried' | 'visiting_fee';
+  /** Pay, bank and login details are only sent to administrators. */
+  monthlySalary: number | null;
+  feePerConsult: number | null;
+  consultationFee: number | null;
+  /** What a patient pays to see this doctor. */
+  opdFee: number;
+  bankAccountLast4: string | null;
+  dateOfJoining: string;
+  active: boolean;
+  email: string | null;
+  hasLogin: boolean;
+}
+
+export interface StaffInput {
+  name: string;
+  role: StaffRole;
+  department: string;
+  hprId?: string | null;
+  employmentType?: 'salaried' | 'visiting_fee';
+  monthlySalary?: number | null;
+  feePerConsult?: number | null;
+  consultationFee?: number | null;
+  bankAccountLast4?: string | null;
+  login?: { email: string; password: string };
+}
+
+export const listStaff = (role?: StaffRole) => get<Envelope<StaffMember[]>>(`/staff${role ? `?role=${role}` : ''}`);
+export const addStaff = (body: StaffInput) => post<Envelope<StaffMember>>('/staff', body);
+export const updateStaff = (id: string, body: Partial<Omit<StaffInput, 'login'>> & { active?: boolean }) =>
+  patch<Envelope<StaffMember>>(`/staff/${id}`, body);
+export const setStaffLogin = (id: string, body: { email: string; password: string }) => put<Envelope<StaffMember>>(`/staff/${id}/login`, body);
+export const removeStaffLogin = (id: string) => del<Envelope<StaffMember>>(`/staff/${id}/login`);
+
+export interface HospitalSettings {
+  opdDefaultFee: number;
+  erFee: number;
+  unlistedTestPrice: number;
+  unlistedMedicinePrice: number;
+  medicineGstPct: number;
+  bedDayCheckoutHour: number;
+  gstin: string;
+  registrationNo: string;
+  drugLicenseNo: string;
+  requireReportVerification: boolean;
+  consentText: string;
+  billFooter: string;
+}
+
+export const getHospitalSettings = () => get<Envelope<HospitalSettings>>('/settings');
+export const saveHospitalSettings = (body: Partial<HospitalSettings>) => put<Envelope<HospitalSettings>>('/settings', body);
+
+export interface FacilityProfile {
+  name: string;
+  hfrId: string;
+  hipId: string | null;
+  facilityType: string | null;
+  address: string | null;
+  state: string | null;
+  district: string | null;
+  pincode: string | null;
+  phone: string | null;
+  email: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export const getFacilityProfile = () => get<Envelope<FacilityProfile>>('/facility-profile');
+export const saveFacilityProfile = (body: Partial<Omit<FacilityProfile, 'email'>>) => put<Envelope<FacilityProfile>>('/facility-profile', body);
+
+export interface AuditEntry {
+  id: string;
+  at: string;
+  actor: string;
+  action: string;
+  detail: string;
+}
+
+export const listAuditLog = (params: { limit?: number; before?: string; search?: string } = {}) => {
+  const query = new URLSearchParams();
+  if (params.limit) query.set('limit', String(params.limit));
+  if (params.before) query.set('before', params.before);
+  if (params.search) query.set('search', params.search);
+  const qs = query.toString();
+  return get<Envelope<AuditEntry[]>>(`/audit-log${qs ? `?${qs}` : ''}`);
+};
 
 // ---- Dashboard counts ----------------------------------------------------------------------------------------
 

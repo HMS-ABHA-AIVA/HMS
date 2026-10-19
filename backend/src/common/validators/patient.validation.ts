@@ -44,4 +44,7 @@ export const updatePatientSchema = z.object({
     address: optionalText(300, "Address").optional(),
     stateName: optionalText(80, "State").optional(),
     districtName: optionalText(80, "District").optional(),
+    // Whole lists: send every entry that should remain
+    allergies: z.array(optionalText(100, "Allergy").min(1, "Allergy cannot be empty")).max(30, "At most 30 allergies").optional(),
+    problemList: z.array(optionalText(100, "Problem").min(1, "Problem cannot be empty")).max(50, "At most 50 problems").optional(),
 }).strict();

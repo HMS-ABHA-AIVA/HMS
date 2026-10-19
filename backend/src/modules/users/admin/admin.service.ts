@@ -21,7 +21,8 @@ export const loginAdminService = async (email: string,password: string) => {
 
     const isPasswordValid = await bcrypt.compare(password,existingUser.passwordHash);
 
-    if (!isPasswordValid) {
+    // A deactivated login is refused with the same message as a wrong password.
+    if (!isPasswordValid || !existingUser.active) {
         throw new ApiError(401, "invalid email or password");
     }
 
@@ -69,6 +70,7 @@ export const loginAdminService = async (email: string,password: string) => {
             name: existingUser.name,
             email: existingUser.email,
             facilityId: existingUser.facilityId,
+            role: existingUser.role,
         },
     };
 };
