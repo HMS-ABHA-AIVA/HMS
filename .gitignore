@@ -26,6 +26,9 @@ coverage
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Cloud Run environment values (secrets): never commit
+env.cloudrun.yaml
 !.env.example
 
 # Editor / OS files
