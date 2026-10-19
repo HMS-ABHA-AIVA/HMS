@@ -55,7 +55,26 @@ but leaves two logins, two patient records per person and two ABDM clients, whic
 ### Progress
 - **Stage 0 (foundation): done.** Roles on logins, staff table, hospital settings, facility profile, general audit log, per-hospital counters, patient MRNs, allergies and problem list; Staff, Hospital settings and Audit log screens; 27 backend tests.
 
-### Stages
+### Order change (found while reading the prototype for Stage 1)
+The prototype's visits (encounters) are tied to other modules: an OPD visit raises a fee bill on creation and closing a visit generates the bill, an order is
+priced from the test master, and an admission is billed under a panel. So visits cannot be ported before billing, masters and panels. The order is therefore:
+
+| # | Stage | Content |
+|---|---|---|
+| 1 | Beds and housekeeping | Wards and beds, bed status flow (occupied, dirty, cleaning, vacant, reserved), housekeeping log |
+| 2 | Masters, panels and billing core | Services, investigations (tests), panels and rates, Rx templates, bills and bill items |
+| 3 | Visits | OPD, ER and IPD encounters, vitals, prescriptions, orders, SOAP note, discharge |
+| 4 | OPD billing | Invoices, payments, refunds, slips, tokens, multi-doctor visits |
+| 5 | IPD billing | Bed stays, charges, advances, running and final bill |
+| 6 | Pharmacy and drugs | Stock, purchases, sales, GST, ward medicine round, drug catalog |
+| 7 | Lab and radiology | Results, reports, amendments, lab invoices |
+| 8 | Operations | Supplies, waste, roster, attendance, payroll, messaging |
+| 9 | AI assist and documents | Consult assist, discharge drafts, attachments |
+| 10 | Platform (optional) | Multi-hospital console |
+
+The table below is the original order, kept for reference.
+
+### Stages (original order)
 | # | Stage | Content |
 |---|---|---|
 | 0 | Foundation | `role` on User, role middleware, staff profile fields (department, HPR id, fee), hospital settings, shared audit log, error shape |
