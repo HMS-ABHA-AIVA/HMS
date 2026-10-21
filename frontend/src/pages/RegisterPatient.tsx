@@ -78,7 +78,9 @@ export function RegisterPatient() {
     abhaAddress: string | null;
   } | null>(null);
   // Step 1 mode: the patient already has an ABHA number / address (only that is asked) or not (name, date of birth, mobile)
-  const [hasAbha, setHasAbha] = useState(false);
+  const [startWith, setStartWith] = useState<"abha" | "aadhaar" | "none">("none");
+  const hasAbha = startWith === "abha";
+  const hasAadhaar = startWith === "aadhaar";
   const [mobileAccounts, setMobileAccounts] = useState<AbhaAccountItem[]>([]);
   const [selectedAbhaNumber, setSelectedAbhaNumber] = useState("");
 
@@ -153,6 +155,31 @@ export function RegisterPatient() {
     setErrorState(null);
     const abhaId = form.abhaId.trim();
     let abhaKind: "link_number" | "link_address" | null = null;
+
+    if (hasAadhaar) {
+      // The details come from the Aadhaar itself, after the patient's OTP consent: nothing else is asked here.
+      const digits = aadhaar.replace(/\D/g, "");
+      if (digits.length !== 12) {
+        setErrorState({
+          tone: "error",
+          title: digits.length === 0 ? "Aadhaar number needed" : "Invalid Aadhaar number",
+          body: digits.length === 0 ? "Enter the patient's 12-digit Aadhaar number." : `The Aadhaar number has ${digits.length} digit${digits.length === 1 ? "" : "s"}, but it needs 12.`,
+        });
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await createPatient({});
+        setPatientId(res.data.id);
+        setMode("link_aadhaar");
+        setStep(3);
+      } catch (err) {
+        setErrorState(mapApiError(err));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     if (hasAbha) {
       // An ABHA number / address is unique to one person: no name, date of birth or mobile is needed.
@@ -520,9 +547,11 @@ export function RegisterPatient() {
           <div className="card-form">
             <h2>Patient details</h2>
             <p className="lead">
-              {hasAbha
-                ? "Enter the ABHA number or address. You will verify it with an OTP on the next screens."
-                : "The patient record is saved when you continue, so you can add an ABHA next."}
+              {hasAadhaar
+                ? "Enter the Aadhaar number. After the patient's consent and OTP, the details are fetched for you."
+                : hasAbha
+                  ? "Enter the ABHA number or address. You will verify it with an OTP on the next screens."
+                  : "The patient record is saved when you continue, so you can add an ABHA next."}
             </p>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
@@ -530,14 +559,35 @@ export function RegisterPatient() {
               </div>
             )}
             <div className="seg" style={{ marginBottom: 16 }}>
-              <button type="button" className={hasAbha ? "on" : ""} onClick={() => { setHasAbha(true); setErrorState(null); }} disabled={loading}>
+              <button type="button" className={hasAbha ? "on" : ""} onClick={() => { setStartWith("abha"); setErrorState(null); }} disabled={loading}>
                 Has an ABHA number
               </button>
-              <button type="button" className={!hasAbha ? "on" : ""} onClick={() => { setHasAbha(false); setErrorState(null); }} disabled={loading}>
-                No ABHA number
+              <button type="button" className={hasAadhaar ? "on" : ""} onClick={() => { setStartWith("aadhaar"); setErrorState(null); }} disabled={loading}>
+                Has an Aadhaar number
+              </button>
+              <button type="button" className={startWith === "none" ? "on" : ""} onClick={() => { setStartWith("none"); setErrorState(null); }} disabled={loading}>
+                Neither
               </button>
             </div>
-            {hasAbha ? (
+            {hasAadhaar ? (
+              <div className="field">
+                <label>Aadhaar number</label>
+                <input
+                  className="input mono"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="12 digits"
+                  value={aadhaar}
+                  onChange={(e) => setAadhaar(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                  disabled={loading}
+                  maxLength={12}
+                />
+                <div className="hint">
+                  Hidden as you type and sent to ABDM encrypted. After the patient's OTP, their name, date of birth and mobile number are taken from the Aadhaar record.
+                </div>
+              </div>
+            ) : hasAbha ? (
               <div className="field">
                 <label>ABHA number / ABHA address</label>
                 <input
@@ -627,7 +677,7 @@ export function RegisterPatient() {
                 Cancel
               </button>
               <button className="btn btn-primary" type="button" onClick={handleSavePatient} disabled={loading}>
-                {loading ? "Saving..." : hasAbha ? "Continue" : "Save and continue"}
+                {loading ? "Saving..." : hasAbha || hasAadhaar ? "Continue" : "Save and continue"}
               </button>
             </div>
           </div>
