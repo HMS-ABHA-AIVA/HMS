@@ -4,6 +4,7 @@ import { AppShell } from "../components/AppShell";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   createPatient,
+  updatePatient,
   listPatients,
   requestAbhaCreateOtp,
   verifyAbhaCreateOtp,
@@ -53,7 +54,7 @@ export function RegisterPatient() {
 
   // Step 1: Patient details
   const [patientId, setPatientId] = useState<string>(existingPatientId || "");
-  const [form, setForm] = useState({ name: "", abhaId: "", dob: "", gender: "Male", mobile: "", email: "" });
+  const [form, setForm] = useState({ name: "", abhaId: "", idSearch: "", dob: "", gender: "Male", mobile: "", email: "" });
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   // Step 3: Identity & Consent
@@ -77,12 +78,8 @@ export function RegisterPatient() {
     abhaNumber: string;
     abhaAddress: string | null;
   } | null>(null);
-  // Step 1 mode: the patient already has an ABHA number / address (only that is asked) or not (name, date of birth, mobile)
-  const [startWith, setStartWith] = useState<"abha" | "aadhaar" | "manual">("manual");
-  // Aadhaar route: make a new ABHA from the Aadhaar, or link the ABHA the patient already has
-  const [aadhaarAction, setAadhaarAction] = useState<"create" | "link">("create");
-  const hasAbha = startWith === "abha";
-  const hasAadhaar = startWith === "aadhaar";
+  // Step 1 route: look up an existing ABHA, create a new one, or register by hand
+  const [route, setRoute] = useState<"existing" | "new" | "manual">("existing");
   const [mobileAccounts, setMobileAccounts] = useState<AbhaAccountItem[]>([]);
   const [selectedAbhaNumber, setSelectedAbhaNumber] = useState("");
 
@@ -144,10 +141,9 @@ export function RegisterPatient() {
     setStep(5);
   }
 
-  // Tells an ABHA number from an ABHA address, with a specific message when it is neither.
+  // ABHA number or ABHA address, with a specific message when it is neither.
   function classifyAbhaId(raw: string): { kind: "link_number" | "link_address" } | { error: MappedErrorState } {
     const id = raw.trim();
-    if (!id) return { error: { tone: "error", title: "ABHA number needed", body: "Enter the patient's 14-digit ABHA number or their ABHA address." } };
     if (/^[\d\s-]+$/.test(id)) {
       const digits = id.replace(/\D/g, "").length;
       if (digits !== 14) {
@@ -156,118 +152,123 @@ export function RegisterPatient() {
       return { kind: "link_number" };
     }
     if (id.includes("@") && !/@(sbx|abdm)$/i.test(id)) {
-      return {
-        error: {
-          tone: "error",
-          title: "That is not an ABHA address",
-          body: "An ABHA address ends with @sbx (sandbox) or @abdm (production), for example name@sbx.",
-        },
-      };
+      return { error: { tone: "error", title: "Invalid ABHA address", body: "An ABHA address ends with @sbx (sandbox) or @abdm (production), for example name@sbx." } };
     }
     if (!/^[A-Za-z0-9._]{3,40}(@(sbx|abdm))?$/i.test(id)) {
-      return { error: { tone: "error", title: "Invalid ABHA address", body: "Enter the ABHA address, for example name@sbx: 3 to 40 letters, digits, dots or underscores." } };
+      return { error: { tone: "error", title: "Invalid ABHA address", body: "An ABHA address has 3 to 40 letters, digits, dots or underscores, for example name@sbx." } };
     }
     return { kind: "link_address" };
   }
 
-  // Step 1: Create patient
+  // Second lookup box: 10 digits is a mobile number, 12 digits is an Aadhaar number.
+  function classifyMobileOrAadhaar(raw: string): { kind: "link_mobile" | "link_aadhaar"; digits: string } | { error: MappedErrorState } {
+    const value = raw.trim();
+    const stray = [...new Set(value.replace(/[\d\s]/g, ""))];
+    if (stray.length > 0) {
+      return { error: { tone: "error", title: "Wrong number", body: `Digits only, but it has ${stray.map((c) => `"${c}"`).join(" ")}.` } };
+    }
+    const digits = value.replace(/\s/g, "");
+    if (digits.length === 10) {
+      const issue = mobileProblem(digits);
+      return issue ? { error: { tone: "error", title: "Wrong mobile number", body: issue } } : { kind: "link_mobile", digits };
+    }
+    if (digits.length === 12) {
+      if (/^[01]/.test(digits)) {
+        return { error: { tone: "error", title: "Wrong Aadhaar number", body: `An Aadhaar number does not start with ${digits[0]}.` } };
+      }
+      return { kind: "link_aadhaar", digits };
+    }
+    return { error: { tone: "error", title: "Wrong number", body: `${digits.length} digit${digits.length === 1 ? "" : "s"} entered. A mobile number has 10, an Aadhaar number has 12.` } };
+  }
+
+  // Step 1: validate the chosen route, make the patient record and go to the next screen.
   async function handleSavePatient() {
     setErrorState(null);
-    const abhaId = form.abhaId.trim();
-    let abhaKind: "link_number" | "link_address" | null = null;
+    let linkMode: AbhaMode | null = null;
+    let body: Parameters<typeof createPatient>[0] = {};
+    let next: () => void = () => undefined;
 
-    if (hasAadhaar) {
-      // The details come from the Aadhaar itself, after the patient's OTP consent: nothing else is asked here.
+    if (route === "existing") {
+      const abhaId = form.abhaId.trim();
+      const other = form.idSearch.trim();
+      if (!abhaId && !other) {
+        setErrorState({ tone: "error", title: "Nothing entered", body: "Fill in one of the two boxes." });
+        return;
+      }
+      if (abhaId && other) {
+        setErrorState({ tone: "error", title: "Two boxes filled", body: "Use one box: ABHA number / address, or mobile / Aadhaar." });
+        return;
+      }
+      if (abhaId) {
+        const found = classifyAbhaId(abhaId);
+        if ("error" in found) return setErrorState(found.error);
+        linkMode = found.kind;
+        next = () => (found.kind === "link_number" ? setAbhaNumber(abhaId.replace(/[^\d-]/g, "").slice(0, 17)) : setAbhaAddressInput(abhaId));
+      } else {
+        const found = classifyMobileOrAadhaar(other);
+        if ("error" in found) return setErrorState(found.error);
+        linkMode = found.kind;
+        if (found.kind === "link_mobile") body = { phone: found.digits };
+        next = () => (found.kind === "link_mobile" ? setLinkMobileNumber(found.digits) : setAadhaar(found.digits));
+      }
+    } else if (route === "new") {
       const digits = aadhaar.replace(/\D/g, "");
       if (digits.length !== 12) {
         setErrorState({
           tone: "error",
           title: digits.length === 0 ? "Aadhaar number needed" : "Invalid Aadhaar number",
-          body: digits.length === 0 ? "Enter the patient's 12-digit Aadhaar number." : `The Aadhaar number has ${digits.length} digit${digits.length === 1 ? "" : "s"}, but it needs 12.`,
+          body: digits.length === 0 ? "Enter the 12-digit Aadhaar number." : `The Aadhaar number has ${digits.length} digit${digits.length === 1 ? "" : "s"}, but it needs 12.`,
         });
         return;
       }
-      if (aadhaarAction === "create") {
-        const mobileIssue = mobileProblem(linkMobileNumber);
-        if (mobileIssue) {
-          setErrorState({ tone: "error", title: linkMobileNumber.trim() ? "Wrong mobile number" : "Mobile number needed", body: mobileIssue });
-          return;
-        }
-      }
-      setLoading(true);
-      try {
-        if (!patientId) {
-          const res = await createPatient(aadhaarAction === "create" ? { phone: linkMobileNumber.trim() } : {});
-          setPatientId(res.data.id);
-        }
-        setMode(aadhaarAction === "create" ? "create_aadhaar" : "link_aadhaar");
-        setStep(3);
-      } catch (err) {
-        setErrorState(mapApiError(err));
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (hasAbha) {
-      // An ABHA number / address is unique to one person: no name, date of birth or mobile is needed.
-      const found = classifyAbhaId(abhaId);
-      if ("error" in found) {
-        setErrorState(found.error);
+      const issue = mobileProblem(linkMobileNumber);
+      if (issue) {
+        setErrorState({ tone: "error", title: linkMobileNumber.trim() ? "Wrong mobile number" : "Mobile number needed", body: issue });
         return;
       }
-      abhaKind = found.kind;
+      linkMode = "create_aadhaar";
+      body = { phone: linkMobileNumber.trim() };
     } else {
       if (!form.name.trim()) {
-        setErrorState({ tone: "error", title: "Name is required", body: "Enter the patient's full name." });
+        setErrorState({ tone: "error", title: "Name needed", body: "Enter the patient's full name." });
         return;
       }
       if (!form.dob) {
-        setErrorState({
-          tone: "error",
-          title: "Date of birth is required",
-          body: "When registering by name, the date of birth is needed to tell patients apart and is checked against the ABHA before it is linked.",
-        });
+        setErrorState({ tone: "error", title: "Date of birth needed", body: "Required with a name." });
         return;
       }
       if (form.dob > new Date().toISOString().slice(0, 10)) {
         setErrorState({ tone: "error", title: "Invalid date of birth", body: "Date of birth cannot be in the future." });
         return;
       }
-      const mobileIssue = mobileProblem(form.mobile);
-      if (mobileIssue) {
-        setErrorState({ tone: "error", title: form.mobile.trim() ? "Wrong mobile number" : "Mobile number needed", body: mobileIssue });
+      const issue = mobileProblem(form.mobile);
+      if (issue) {
+        setErrorState({ tone: "error", title: form.mobile.trim() ? "Wrong mobile number" : "Mobile number needed", body: issue });
         return;
       }
+      body = {
+        name: form.name.trim(),
+        phone: form.mobile.trim(),
+        dateOfBirth: form.dob,
+        ...(form.email.trim() ? { email: form.email.trim() } : {}),
+      };
     }
 
     setLoading(true);
     try {
       // going Back from the OTP screens and continuing again reuses the record already made for this registration
-      let newId = hasAbha && patientId ? patientId : "";
-      if (!newId) {
-        const res = await createPatient(
-          hasAbha
-            ? {}
-            : {
-                name: form.name.trim(),
-                phone: form.mobile.trim(),
-                dateOfBirth: form.dob,
-                ...(form.email.trim() ? { email: form.email.trim() } : {}),
-              },
-        );
-        newId = res.data.id;
+      let id = route !== "manual" ? patientId : "";
+      if (id) {
+        if (body.phone) await updatePatient(id, { phone: body.phone });
+      } else {
+        id = (await createPatient(body)).data.id;
       }
-      setPatientId(newId);
-      if (abhaKind) {
-        // the ABHA is already known: go straight to linking it
-        if (abhaKind === "link_number") setAbhaNumber(abhaId.replace(/[^\d-]/g, "").slice(0, 17));
-        else setAbhaAddressInput(abhaId);
-        setMode(abhaKind);
+      setPatientId(id);
+      next();
+      if (linkMode) {
+        setMode(linkMode);
         setStep(3);
       } else {
-        // manual registration: nothing more to ask, an ABHA can be added later from the patient's record
         setStep(5);
       }
     } catch (err) {
@@ -582,8 +583,7 @@ export function RegisterPatient() {
 
         {step === 1 && (
           <div className="card-form">
-            <h2>Patient details</h2>
-            <p className="lead">Choose how this patient is being registered, then fill in only what that option asks for.</p>
+            <h2>Registration type</h2>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
                 <StopState {...errorState} />
@@ -591,9 +591,9 @@ export function RegisterPatient() {
             )}
             {(
               [
-                ["abha", "1. The patient has an ABHA number or ABHA address", "Enter it, verify with an OTP, and the patient's details are fetched from the ABHA."],
-                ["aadhaar", "2. The patient has an Aadhaar number", "Enter it and verify with an OTP on the Aadhaar-linked mobile. Create a new ABHA or link the one they have; details come from the Aadhaar record."],
-                ["manual", "3. Register without ABHA", "Enter the patient's name, date of birth and mobile number by hand. An ABHA can be added later from the patient's record."],
+                ["existing", "Existing ABHA", "Search by ABHA number, ABHA address, mobile number or Aadhaar number"],
+                ["new", "New ABHA", "Create using Aadhaar number and mobile number"],
+                ["manual", "Manual registration", "Name, date of birth, gender and mobile number"],
               ] as const
             ).map(([key, title, text]) => (
               <button
@@ -605,11 +605,11 @@ export function RegisterPatient() {
                   width: "100%",
                   textAlign: "left",
                   marginBottom: 8,
-                  background: startWith === key ? "var(--info-bg)" : undefined,
-                  borderColor: startWith === key ? "var(--navy, #1b1f4b)" : undefined,
+                  background: route === key ? "var(--info-bg)" : undefined,
+                  borderColor: route === key ? "var(--navy, #1b1f4b)" : undefined,
                 }}
                 onClick={() => {
-                  setStartWith(key);
+                  setRoute(key);
                   setErrorState(null);
                 }}
                 disabled={loading}
@@ -619,7 +619,37 @@ export function RegisterPatient() {
               </button>
             ))}
             <hr className="sep" />
-            {hasAadhaar ? (
+
+            {route === "existing" && (
+              <>
+                <div className="field">
+                  <label>ABHA number / ABHA address</label>
+                  <input
+                    className="input mono"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    placeholder="91-1234-5678-9012 or name@sbx"
+                    value={form.abhaId}
+                    onChange={(e) => set("abhaId", e.target.value.replace(/[^A-Za-z0-9._@\- ]/g, "").slice(0, 50))}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="field">
+                  <label>Mobile number / Aadhaar number</label>
+                  <input
+                    className="input mono"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="10 or 12 digits"
+                    value={form.idSearch}
+                    onChange={(e) => set("idSearch", e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+              </>
+            )}
+
+            {route === "new" && (
               <>
                 <div className="field">
                   <label>Aadhaar number</label>
@@ -634,127 +664,92 @@ export function RegisterPatient() {
                     disabled={loading}
                     maxLength={12}
                   />
-                  <div className="hint">Hidden as you type and sent to ABDM encrypted; it is not stored here.</div>
                 </div>
                 <div className="field">
-                  <label>What should happen with the ABHA?</label>
-                  <div className="seg">
-                    <button type="button" className={aadhaarAction === "create" ? "on" : ""} onClick={() => setAadhaarAction("create")} disabled={loading}>
-                      Create a new ABHA
-                    </button>
-                    <button type="button" className={aadhaarAction === "link" ? "on" : ""} onClick={() => setAadhaarAction("link")} disabled={loading}>
-                      Link the patient's existing ABHA
-                    </button>
-                  </div>
-                </div>
-                {aadhaarAction === "create" && (
-                  <div className="field">
-                    <label>Mobile number for the new ABHA</label>
-                    <div className="mobile-wrap">
-                      <span className="mobile-prefix">+91</span>
-                      <input
-                        className="input mono"
-                        inputMode="numeric"
-                        placeholder="10 digits"
-                        value={linkMobileNumber}
-                        onChange={(e) => setLinkMobileNumber(e.target.value)}
-                        disabled={loading}
-                      />
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : hasAbha ? (
-              <div className="field">
-                <label>ABHA number / ABHA address</label>
-                <input
-                  className="input mono"
-                  autoComplete="off"
-                  autoCapitalize="none"
-                  placeholder="91-1234-5678-9012 or name@sbx"
-                  value={form.abhaId}
-                  onChange={(e) => set("abhaId", e.target.value.replace(/[^A-Za-z0-9._@\- ]/g, "").slice(0, 50))}
-                  disabled={loading}
-                />
-                <div className="hint">
-                  An ABHA is unique to one person, so nothing else is needed. Name, date of birth and mobile number are taken from the ABHA once it is linked.
-                </div>
-              </div>
-            ) : (
-              <>
-            <div className="field">
-              <label>Full name</label>
-              <input
-                className="input"
-                placeholder="As on the patient's Aadhaar / ABHA"
-                value={form.name}
-                onChange={(e) => set("name", e.target.value)}
-                disabled={loading}
-              />
-            </div>
-            <div className="row">
-              <div className="field" style={{ width: 170 }}>
-                <label>Date of birth</label>
-                <input
-                  className="input"
-                  type="date"
-                  max={new Date().toISOString().slice(0, 10)}
-                  value={form.dob}
-                  onChange={(e) => set("dob", e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-              <div className="field">
-                <label>Gender</label>
-                <div className="seg">
-                  {["Male", "Female", "Other"].map((g) => (
-                    <button
-                      key={g}
-                      type="button"
-                      className={form.gender === g ? "on" : ""}
-                      onClick={() => set("gender", g)}
+                  <label>Mobile number</label>
+                  <div className="mobile-wrap">
+                    <span className="mobile-prefix">+91</span>
+                    <input
+                      className="input mono"
+                      inputMode="numeric"
+                      placeholder="10 digits"
+                      value={linkMobileNumber}
+                      onChange={(e) => setLinkMobileNumber(e.target.value)}
                       disabled={loading}
-                    >
-                      {g}
-                    </button>
-                  ))}
+                    />
+                  </div>
                 </div>
-              </div>
-            </div>
-            <hr className="sep" />
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>How to reach the patient</div>
-            <div className="field">
-              <label>Mobile number</label>
-              <div className="mobile-wrap">
-                <span className="mobile-prefix">+91</span>
-                <input
-                  className="input"
-                  placeholder="10 digits"
-                  value={form.mobile}
-                  onChange={(e) => set("mobile", e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-            </div>
-            <div className="field">
-              <label>
-                Email <span className="opt">(optional)</span>
-              </label>
-              <input
-                className="input"
-                value={form.email}
-                onChange={(e) => set("email", e.target.value)}
-                disabled={loading}
-              />
-            </div>
               </>
             )}
+
+            {route === "manual" && (
+              <>
+                <div className="field">
+                  <label>Full name</label>
+                  <input
+                    className="input"
+                    value={form.name}
+                    onChange={(e) => set("name", e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="row">
+                  <div className="field" style={{ width: 170 }}>
+                    <label>Date of birth</label>
+                    <input
+                      className="input"
+                      type="date"
+                      max={new Date().toISOString().slice(0, 10)}
+                      value={form.dob}
+                      onChange={(e) => set("dob", e.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Gender</label>
+                    <div className="seg">
+                      {["Male", "Female", "Other"].map((g) => (
+                        <button
+                          key={g}
+                          type="button"
+                          className={form.gender === g ? "on" : ""}
+                          onClick={() => set("gender", g)}
+                          disabled={loading}
+                        >
+                          {g}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Mobile number</label>
+                  <div className="mobile-wrap">
+                    <span className="mobile-prefix">+91</span>
+                    <input
+                      className="input"
+                      placeholder="10 digits"
+                      value={form.mobile}
+                      onChange={(e) => set("mobile", e.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+                <div className="field">
+                  <label>
+                    Email <span className="opt">(optional)</span>
+                  </label>
+                  <input className="input" value={form.email} onChange={(e) => set("email", e.target.value)} disabled={loading} />
+                </div>
+              </>
+            )}
+
             <div className="form-actions">
               <button className="btn-link" type="button" onClick={() => navigate("/")} disabled={loading}>
                 Cancel
               </button>
               <button className="btn btn-primary" type="button" onClick={handleSavePatient} disabled={loading}>
-                {loading ? "Saving..." : hasAbha || hasAadhaar ? "Continue" : "Save and continue"}
+                {loading ? "Please wait..." : route === "manual" ? "Register" : route === "new" ? "Continue" : "Search"}
               </button>
             </div>
           </div>
@@ -872,10 +867,10 @@ export function RegisterPatient() {
             </h2>
             <p className="lead">
               {mode === "link_mobile"
-                ? "An OTP will be sent to this mobile number registered with ABHA."
+                ? "OTP to the mobile registered with ABHA"
                 : mode === "link_number" || mode === "link_address"
-                  ? "An OTP will be sent to the mobile you choose below."
-                  : "An OTP will be sent to the mobile linked with this Aadhaar."}
+                  ? "OTP to the selected mobile"
+                  : "OTP to the Aadhaar-linked mobile"}
             </p>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
@@ -984,7 +979,7 @@ export function RegisterPatient() {
           <div className="card-form" style={{ borderStyle: "dashed" }}>
             <h2>Enter the OTP</h2>
             <p className="lead">
-              {otpMessage || "The patient will have received a 6-digit code."} Valid for 10 minutes.
+              {otpMessage || "6-digit OTP sent"} · valid 10 minutes
             </p>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
@@ -1100,8 +1095,8 @@ export function RegisterPatient() {
               {refresh
                 ? "ABHA verified. Live details and the QR code are now available on the record."
                 : linked
-                  ? "ABHA linked to this patient."
-                  : "Patient registered. An ABHA can be added later from the patient's record."}
+                  ? "ABHA linked"
+                  : "Patient registered"}
             </p>
             {linked && (
               <div className="kv" style={{ marginBottom: 14 }}>

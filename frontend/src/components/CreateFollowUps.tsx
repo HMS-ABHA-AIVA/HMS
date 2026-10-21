@@ -13,9 +13,9 @@ import { mapApiError, type MappedErrorState } from "@/lib/errorHelper";
 import { ABHA_ADDRESS_POLICY, MAX_OTP_RESENDS, OTP_RESEND_SECONDS, isValidAbhaAddressName } from "@/lib/abhaRules";
 
 /**
- * Shown right after an ABHA is created. Two optional steps ABDM defines for enrolment:
- *  1. verify the mobile number to link with the ABHA, when it is not the Aadhaar-linked one
- *  2. choose a personalised ABHA address (the ABHA already has a default one)
+ * Shown right after an ABHA is created:
+ *  1. mobile verification, when the mobile is not the Aadhaar-linked one
+ *  2. ABHA address: typed by staff, or generated from ABDM's suggestions when left empty
  */
 export function CreateFollowUps({
   transactionId,
@@ -43,7 +43,6 @@ export function CreateFollowUps({
   const [resendCount, setResendCount] = useState(0);
 
   const [address, setAddress] = useState(abhaAddress);
-  const [choosing, setChoosing] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [custom, setCustom] = useState("");
 
@@ -55,6 +54,19 @@ export function CreateFollowUps({
     const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
     return () => clearTimeout(t);
   }, [resendIn]);
+
+  // ABDM's suggested addresses, offered as quick picks and used when the box is left empty
+  useEffect(() => {
+    let cancelled = false;
+    withAbdmSession(environment, () => getAbhaAddressSuggestions(transactionId, environment))
+      .then((res) => {
+        if (!cancelled) setSuggestions(res.data.suggestions);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [transactionId, environment]);
 
   async function run(task: () => Promise<void>) {
     setError(null);
@@ -83,7 +95,7 @@ export function CreateFollowUps({
   const confirmMobileOtp = () => {
     const clean = otp.replace(/\D/g, "");
     if (clean.length !== 6) {
-      setError({ tone: "error", title: "Invalid OTP", body: "OTP must be exactly 6 digits." });
+      setError({ tone: "error", title: "Invalid OTP", body: `The OTP has ${clean.length} digit${clean.length === 1 ? "" : "s"}, but it needs 6.` });
       return Promise.resolve();
     }
     return run(async () => {
@@ -93,30 +105,25 @@ export function CreateFollowUps({
     });
   };
 
-  const openAddressChooser = () =>
-    run(async () => {
-      const res = await withAbdmSession(environment, () => getAbhaAddressSuggestions(transactionId, environment));
-      setSuggestions(res.data.suggestions);
-      setChoosing(true);
-    });
-
-  const saveAddress = (name: string) =>
-    run(async () => {
-      const res = await withAbdmSession(environment, () => createAbhaAddress({ transactionId, abhaAddress: name, environment }));
-      setAddress(res.data.abhaAddress);
-      setChoosing(false);
-    });
-
   const customName = custom.trim().toLowerCase();
-  const customError = customName && !isValidAbhaAddressName(customName) ? "This does not follow the ABHA address rules below." : "";
+  const customError = customName && !isValidAbhaAddressName(customName) ? "Does not follow the ABHA address rules" : "";
+
+  // Typed address wins; with the box empty and no address yet, the first suggestion is used.
+  const finish = () =>
+    run(async () => {
+      const wanted = customName || (address ? "" : suggestions[0] ?? "");
+      if (wanted) {
+        const res = await withAbdmSession(environment, () => createAbhaAddress({ transactionId, abhaAddress: wanted, environment }));
+        setAddress(res.data.abhaAddress);
+        onDone(res.data.abhaAddress);
+        return;
+      }
+      onDone(address);
+    });
 
   return (
     <div className="card-form">
       <h2>ABHA created</h2>
-      <p className="lead">
-        <span className="dot ok" />
-        The ABHA is created and linked to this patient. Two optional steps remain.
-      </p>
       <div className="kv" style={{ marginBottom: 16 }}>
         <div className="k">ABHA number</div>
         <div className="mono">{abhaNumber}</div>
@@ -130,20 +137,18 @@ export function CreateFollowUps({
         </div>
       )}
 
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>1. Mobile number</div>
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Mobile verification</div>
       {verified ? (
         <p className="osh-sub" style={{ margin: "0 0 16px" }}>
           <span className="dot ok" />
-          +91 {mobile} is verified for this ABHA.
+          +91 {mobile} verified
         </p>
       ) : (
         <div style={{ marginBottom: 16 }}>
-          <p className="osh-sub" style={{ margin: "0 0 8px" }}>
-            +91 {mobile} is not the mobile linked to the Aadhaar, so it must be verified with an OTP.
-          </p>
+          <p className="osh-sub" style={{ margin: "0 0 8px" }}>+91 {mobile} not verified</p>
           {!otpSent ? (
             <button className="btn btn-ghost" type="button" onClick={() => sendMobileOtp()} disabled={busy}>
-              {busy ? "Sending..." : "Send OTP to this mobile"}
+              {busy ? "Sending..." : "Send OTP"}
             </button>
           ) : (
             <>
@@ -162,7 +167,7 @@ export function CreateFollowUps({
               </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <button className="btn btn-primary" type="button" onClick={confirmMobileOtp} disabled={busy}>
-                  {busy ? "Verifying..." : "Verify mobile"}
+                  {busy ? "Verifying..." : "Verify"}
                 </button>
                 <button
                   className="btn btn-ghost"
@@ -182,60 +187,39 @@ export function CreateFollowUps({
         </div>
       )}
 
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>2. ABHA address</div>
-      <p className="osh-sub" style={{ margin: "0 0 8px" }}>
-        Current address: <span className="mono">{address ?? "—"}</span>
-      </p>
-      {!choosing ? (
-        <button className="btn btn-ghost" type="button" onClick={openAddressChooser} disabled={busy}>
-          {busy ? "Loading..." : "Choose a personalised address"}
-        </button>
-      ) : (
-        <div>
-          {suggestions.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-              {suggestions.map((s) => (
-                <button key={s} className="btn btn-ghost" type="button" onClick={() => saveAddress(s)} disabled={busy}>
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="field" style={{ maxWidth: 320 }}>
-            <label>Or type your own</label>
-            <input
-              className="input mono"
-              placeholder="for example ramesh.gupta"
-              value={custom}
-              onChange={(e) => setCustom(e.target.value)}
-              disabled={busy}
-            />
-            {customError && <div className="hint" style={{ color: "var(--error)" }}>{customError}</div>}
-            <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-              {ABHA_ADDRESS_POLICY.map((rule) => (
-                <li key={rule}>{rule}</li>
-              ))}
-            </ul>
+      <div className="field" style={{ maxWidth: 360 }}>
+        <label>
+          Custom ABHA address <span className="opt">(optional, auto-generated if empty)</span>
+        </label>
+        <input
+          className="input mono"
+          autoComplete="off"
+          autoCapitalize="none"
+          placeholder="ramesh.gupta"
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          disabled={busy}
+        />
+        {customError && <div className="hint" style={{ color: "var(--error)" }}>{customError}</div>}
+        {suggestions.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            {suggestions.slice(0, 6).map((s) => (
+              <button key={s} className="btn btn-ghost" type="button" onClick={() => setCustom(s)} disabled={busy}>
+                {s}
+              </button>
+            ))}
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button
-              className="btn btn-primary"
-              type="button"
-              onClick={() => saveAddress(customName)}
-              disabled={busy || !customName || Boolean(customError)}
-            >
-              {busy ? "Saving..." : "Use this address"}
-            </button>
-            <button className="btn-link" type="button" onClick={() => setChoosing(false)} disabled={busy}>
-              Keep the current address
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+        <ul className="hint" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+          {ABHA_ADDRESS_POLICY.map((rule) => (
+            <li key={rule}>{rule}</li>
+          ))}
+        </ul>
+      </div>
 
       <div className="form-actions" style={{ justifyContent: "flex-start", marginTop: 24 }}>
-        <button className="btn btn-primary" type="button" onClick={() => onDone(address)} disabled={busy}>
-          Continue
+        <button className="btn btn-primary" type="button" onClick={finish} disabled={busy || Boolean(customError)}>
+          {busy ? "Saving..." : "Continue"}
         </button>
       </div>
     </div>
