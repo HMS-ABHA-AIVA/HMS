@@ -84,13 +84,12 @@ const linkAbhaToPatient = async (
   abhaNumber: string,
   abhaAddress: string | null,
   demographics: AbhaDemographics,
-  newlyCreated = false,
   // The patient was registered with this ABHA and a mobile number: that number must be the one on the ABHA.
   requireMobileMatch = false,
 ) => {
   const patient = await prisma.patient.findUnique({
     where: { id: patientId },
-    select: { name: true, dateOfBirth: true, phone: true, gender: true, address: true, stateName: true, districtName: true },
+    select: { facilityId: true, name: true, dateOfBirth: true, phone: true, gender: true, address: true, stateName: true, districtName: true },
   });
   if (!patient) {
     throw new ApiError(404, "Patient not found", [], "PATIENT_NOT_FOUND");
@@ -98,20 +97,21 @@ const linkAbhaToPatient = async (
 
   // A patient registered from an ABHA number / address has no name of their own yet, so there is nothing to compare.
   const namePending = patient.name === PENDING_PATIENT_NAME;
+  // Details typed at registration that differ from the ABHA are replaced by the ABHA's (the ABHA is the verified source).
   const mismatches = findAbhaMismatches(patient, demographics).filter((field) => !(namePending && field === "name"));
-  if (mismatches.length > 0) {
-    await setTransactionStatus(transactionId, "FAILED");
-    const fields = mismatches.join(" and ");
-    // Only the field names are reported; the ABHA's own details belong to whoever owns it.
-    throw new ApiError(
-      422,
-      `The patient's ${fields} on the hospital record ${mismatches.length > 1 ? "do" : "does"} not match this ABHA, so nothing was linked. ` +
-        (newlyCreated
-          ? "The ABHA was created from the Aadhaar details you entered; check the patient record and that this is the patient's own Aadhaar."
-          : "Check the patient's details, or confirm you are using the right ABHA."),
-      [],
-      "DETAILS_MISMATCH",
-    );
+
+  // This ABHA already belongs to a patient of this hospital: carry on with that record instead of making a second one.
+  const existing = await prisma.abhaPatient.findUnique({ where: { abhaNumber } });
+  if (existing && existing.patientId !== patientId) {
+    const owner = await prisma.patient.findUnique({ where: { id: existing.patientId }, select: { facilityId: true } });
+    if (!owner || owner.facilityId !== patient.facilityId) {
+      await setTransactionStatus(transactionId, "FAILED");
+      throw new ApiError(409, "This ABHA is already linked to a patient at another hospital", [], "ABHA_LINKED_TO_OTHER_PATIENT");
+    }
+    await prisma.abhaTransaction.update({ where: { id: transactionId }, data: { patientId: existing.patientId } });
+    // drop the blank record that was only created for this attempt
+    if (namePending && patient.phone === "") await prisma.patient.delete({ where: { id: patientId } }).catch(() => undefined);
+    return { ...existing, mobileMatchesRecord: undefined as boolean | undefined, detailsUpdated: [] as string[], alreadyRegistered: true };
   }
 
   if (requireMobileMatch && mobileMatchesRecord(patient.phone, demographics.mobile) === false) {
@@ -124,13 +124,6 @@ const linkAbhaToPatient = async (
       [],
       "ABHA_MOBILE_MISMATCH",
     );
-  }
-
-  const existing = await prisma.abhaPatient.findUnique({ where: { abhaNumber } });
-
-  if (existing && existing.patientId !== patientId) {
-    await setTransactionStatus(transactionId, "FAILED");
-    throw new ApiError(409, "This ABHA is already linked to another patient", [], "ABHA_LINKED_TO_OTHER_PATIENT");
   }
 
   const patientAbha = await prisma.abhaPatient.findUnique({ where: { patientId } });
@@ -159,7 +152,35 @@ const linkAbhaToPatient = async (
     if (/^[6-9]\d{9}$/.test(abhaMobile)) await prisma.patient.update({ where: { id: patientId }, data: { phone: abhaMobile } });
   }
 
-  return { ...abhaPatient, mobileMatchesRecord: noPhoneYet ? undefined : mobileMatchesRecord(patient.phone, demographics.mobile) };
+  // Name / date of birth typed at registration that the ABHA contradicts are replaced, and the record says so.
+  const detailsUpdated: string[] = [];
+  if (mismatches.length > 0) {
+    const data: { name?: string; dateOfBirth?: Date; abhaUpdateNote?: string } = {};
+    const was: string[] = [];
+    const abhaName = cleanText(abhaFullName(demographics), 100);
+    if (mismatches.includes("name") && abhaName) {
+      data.name = abhaName;
+      was.push(`name (was "${patient.name}")`);
+      detailsUpdated.push("name");
+    }
+    const abhaDob = parseAbhaDob(demographics);
+    if (mismatches.includes("date of birth") && abhaDob) {
+      data.dateOfBirth = new Date(Date.UTC(abhaDob.year, (abhaDob.month ?? 1) - 1, abhaDob.day ?? 1));
+      was.push(`date of birth (was ${patient.dateOfBirth ? patient.dateOfBirth.toISOString().slice(0, 10) : "not set"})`);
+      detailsUpdated.push("date of birth");
+    }
+    if (was.length > 0) {
+      data.abhaUpdateNote = `Details updated from the ABHA on ${new Date().toISOString().slice(0, 10)}: ${was.join(", ")}.`;
+      await prisma.patient.update({ where: { id: patientId }, data });
+    }
+  }
+
+  return {
+    ...abhaPatient,
+    mobileMatchesRecord: noPhoneYet ? undefined : mobileMatchesRecord(patient.phone, demographics.mobile),
+    detailsUpdated,
+    alreadyRegistered: false,
+  };
 };
 
 const last10 = (value: string) => digitsOnly(value).slice(-10);
@@ -353,7 +374,7 @@ export const aadhaarOtpVerifyService = async (transactionId: string, facilityId:
   const abhaAddress: string | null =
     abdmResponse.ABHAProfile.phrAddress?.[0] ?? abdmResponse.ABHAProfile.preferredAbhaAddress ?? null;
 
-  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, abhaAddress, abdmResponse.ABHAProfile, true);
+  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, abhaAddress, abdmResponse.ABHAProfile);
 
   // ABDM treats the mobile as verified when it is the Aadhaar-linked one; otherwise it must be verified by OTP.
   const mobileVerified = digitsOnly(String(abdmResponse.ABHAProfile.mobile ?? "")) === digitsOnly(mobile);
@@ -369,7 +390,9 @@ export const aadhaarOtpVerifyService = async (transactionId: string, facilityId:
 
   // Return only what the application needs (not the ABDM photo/address payload).
   return {
-    patientId: transaction.patientId,
+    patientId: abhaPatient.patientId,
+    detailsUpdated: abhaPatient.detailsUpdated,
+    alreadyRegistered: abhaPatient.alreadyRegistered,
     abhaNumber: abhaPatient.abhaNumber,
     abhaAddress: abhaPatient.abhaAddress,
     isNew: Boolean(abdmResponse.isNew),
@@ -443,14 +466,15 @@ const finishLoginVerification = async (
     profile.ABHANumber,
     profile.preferredAbhaAddress ?? null,
     profile,
-    false,
     requireMobileMatch,
   );
 
   await setTransactionStatus(transaction.id, "COMPLETED");
 
   return {
-    patientId: transaction.patientId,
+    patientId: abhaPatient.patientId,
+    detailsUpdated: abhaPatient.detailsUpdated,
+    alreadyRegistered: abhaPatient.alreadyRegistered,
     transactionId: transaction.id,
     message: abdmResponse.message,
     abhaNumber: abhaPatient.abhaNumber,
@@ -638,7 +662,9 @@ export const verifyExistingAbhaMobileUserService = async (abhaNumber: string, tr
   await setTransactionStatus(transaction.id, "COMPLETED");
 
   return {
-    patientId: transaction.patientId,
+    patientId: abhaPatient.patientId,
+    detailsUpdated: abhaPatient.detailsUpdated,
+    alreadyRegistered: abhaPatient.alreadyRegistered,
     transactionId: transaction.id,
     token: xToken,
     expiresIn: abdmResponse.expiresIn as number | undefined,
@@ -1117,12 +1143,14 @@ export const verifyAbhaAddressOtpService = async (transactionId: string, facilit
     districtName: user.districtName,
   };
 
-  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, address, demographics, false, requireMobileMatch);
+  const abhaPatient = await linkAbhaToPatient(transaction.id, transaction.patientId, abhaNumber, address, demographics, requireMobileMatch);
 
   await setTransactionStatus(transaction.id, "COMPLETED");
 
   return {
-    patientId: transaction.patientId,
+    patientId: abhaPatient.patientId,
+    detailsUpdated: abhaPatient.detailsUpdated,
+    alreadyRegistered: abhaPatient.alreadyRegistered,
     transactionId: transaction.id,
     message: abdmResponse.message,
     abhaNumber: abhaPatient.abhaNumber,

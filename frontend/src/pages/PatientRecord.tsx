@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { useAuthStore } from "@/store/useAuthStore";
 import { ApiError } from "@/api/client";
@@ -50,6 +50,8 @@ function formatTimeOnly(dateStr?: string) {
 export function PatientRecord() {
   const { patientId } = useParams<{ patientId: string }>();
   const navigate = useNavigate();
+  // set by the register page, e.g. when the ABHA entered already belonged to this patient
+  const notice = (useLocation().state as { notice?: string } | null)?.notice;
 
   const { session, environment, signOut } = useAuthStore();
   const facilityName = session?.kind === "facility" ? session.name : "City General Hospital";
@@ -213,6 +215,8 @@ export function PatientRecord() {
         </div>
       ) : (
         <>
+          {notice && <div className="notice" style={{ marginTop: 12 }}>{notice}</div>}
+          {patient?.abhaUpdateNote && <div className="notice" style={{ marginTop: 12 }}>{patient.abhaUpdateNote}</div>}
           <div className="rec-head">
             <div>
               <h1 className="osh-h1">{pName}</h1>

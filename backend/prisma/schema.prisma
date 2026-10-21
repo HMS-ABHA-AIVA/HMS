@@ -267,6 +267,9 @@ model Patient {
     allergies   String[] @default([])
     problemList String[] @default([])
 
+    // Set when linking an ABHA replaced the name / date of birth typed at registration; shown on the patient's record
+    abhaUpdateNote String?
+
     facility Facility @relation(fields: [facilityId], references: [id])
 
     abha AbhaPatient?

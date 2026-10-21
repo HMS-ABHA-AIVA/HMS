@@ -24,7 +24,6 @@ const CODE_TITLES: Record<string, { tone: MappedErrorState["tone"]; title: strin
   PATIENT_ALREADY_LINKED: { tone: "error", title: "Patient already has an ABHA" },
   ABHA_LINKED_TO_OTHER_PATIENT: { tone: "error", title: "ABHA belongs to another patient" },
   MULTIPLE_ACCOUNTS: { tone: "error", title: "More than one ABHA found" },
-  DETAILS_MISMATCH: { tone: "error", title: "Patient details do not match this ABHA" },
   PATIENT_NOT_FOUND: { tone: "error", title: "Patient not found" },
   NO_ABHA_LINKED: { tone: "error", title: "No ABHA linked to this patient" },
   ABDM_UNAVAILABLE: { tone: "error", title: "ABDM is temporarily unavailable" },

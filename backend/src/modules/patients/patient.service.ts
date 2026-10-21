@@ -40,6 +40,7 @@ export const getAllPatientsService = async (facilityId: string, limit = 500, pag
     mrn: patient.mrn,
     allergies: patient.allergies,
     problemList: patient.problemList,
+    abhaUpdateNote: patient.abhaUpdateNote,
     name: patient.name,
     phone: patient.phone,
     email: patient.email,

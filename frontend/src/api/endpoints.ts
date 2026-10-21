@@ -60,6 +60,8 @@ export interface BackendPatient {
   mrn?: string | null;
   allergies?: string[];
   problemList?: string[];
+  /** Set when linking an ABHA replaced the name / date of birth typed at registration. */
+  abhaUpdateNote?: string | null;
   name: string;
   phone: string;
   email: string | null;
@@ -117,6 +119,10 @@ export interface AbhaProfile {
   abhaAddress: string | null;
   /** false when the mobile held on the ABHA differs from the hospital record; absent when ABDM sent none. */
   mobileMatchesRecord?: boolean;
+  /** "name" / "date of birth": typed at registration, contradicted by the ABHA and replaced by it. */
+  detailsUpdated?: string[];
+  /** This ABHA already belonged to a patient here: `patientId` is that existing record. */
+  alreadyRegistered?: boolean;
 }
 
 export const verifyAbhaCreateOtp = (body: {
@@ -217,7 +223,10 @@ export const confirmAbhaMobileOtp = (body: { transactionId: string; otp: string;
 
 export const verifyAbhaMobileUser = (body: { abhaNumber: string; transactionId: string; environment: AbdmEnvironment }) =>
   post<Envelope<{
+    patientId: string;
     transactionId: string;
+    detailsUpdated?: string[];
+    alreadyRegistered?: boolean;
     abhaNumber: string;
     abhaAddress: string | null;
     name?: string;

@@ -96,6 +96,8 @@ export const aadhaarOtpVerifyController = async (req: userAuthRequest, res: Resp
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
         isNew: resultData.isNew,
+        detailsUpdated: resultData.detailsUpdated,
+        alreadyRegistered: resultData.alreadyRegistered,
         transactionId: resultData.transactionId,
         mobileVerified: resultData.mobileVerified,
         hasFollowUp: resultData.hasFollowUp,
@@ -147,6 +149,8 @@ export const verifyExistingAbhaAadhaarOtpController = async (req: userAuthReques
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
         mobileMatchesRecord: resultData.mobileMatchesRecord,
+        detailsUpdated: resultData.detailsUpdated,
+        alreadyRegistered: resultData.alreadyRegistered,
       },
     });
   } catch (error) {
@@ -225,10 +229,13 @@ export const verifyExistingAbhaMobileUserController = async (req: userAuthReques
       status: "success",
       message: resultData.message,
       data: {
+        patientId: resultData.patientId,
         transactionId: resultData.transactionId,
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
         mobileMatchesRecord: resultData.mobileMatchesRecord,
+        detailsUpdated: resultData.detailsUpdated,
+        alreadyRegistered: resultData.alreadyRegistered,
         name: resultData.name,
         gender: resultData.gender,
         dob: resultData.dob,
@@ -401,6 +408,8 @@ export const abhaNumberOtpVerifyController = async (req: userAuthRequest, res: R
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
         mobileMatchesRecord: resultData.mobileMatchesRecord,
+        detailsUpdated: resultData.detailsUpdated,
+        alreadyRegistered: resultData.alreadyRegistered,
       },
     });
   } catch (error) {
@@ -539,6 +548,8 @@ export const abhaAddressOtpVerifyController = async (req: userAuthRequest, res: 
         abhaNumber: resultData.abhaNumber,
         abhaAddress: resultData.abhaAddress,
         mobileMatchesRecord: resultData.mobileMatchesRecord,
+        detailsUpdated: resultData.detailsUpdated,
+        alreadyRegistered: resultData.alreadyRegistered,
       },
     });
   } catch (error) {
