@@ -23,11 +23,15 @@ export const createPatientSchema = z.object({
         .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'’\-]*$/u, "Patient name may contain only letters, spaces and . ' -")
         .optional(),
 
-    phone: mobileNumber,
+    // Left out when the patient is registered from an ABHA number / address: the ABHA's mobile is taken once linked.
+    phone: mobileNumber.optional(),
 
     email: z.email("Invalid email address").max(254, "Email address is too long").optional(),
 
     dateOfBirth: dateOfBirth.optional(),
+}).refine((patient) => patient.name === undefined || patient.phone !== undefined, {
+    path: ["phone"],
+    message: "Enter the 10-digit mobile number.",
 });
 
 // Paging for the patient list: bounded so one call can never return the whole table.

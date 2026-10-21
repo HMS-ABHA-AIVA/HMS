@@ -32,7 +32,7 @@ export const createPatientController = async (req: userAuthRequest,res: Response
 
     const patient = await createPatientService(
         result.data.name ?? PENDING_PATIENT_NAME,
-        result.data.phone,
+        result.data.phone ?? "",
         result.data.email,
         facilityId,
         result.data.dateOfBirth

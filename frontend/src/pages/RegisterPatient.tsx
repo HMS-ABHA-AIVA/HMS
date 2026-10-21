@@ -77,8 +77,8 @@ export function RegisterPatient() {
     abhaNumber: string;
     abhaAddress: string | null;
   } | null>(null);
-  // The ABHA was typed on step 1 together with a mobile number: that number must be the one registered on the ABHA.
-  const [mustMatchMobile, setMustMatchMobile] = useState(false);
+  // Step 1 mode: the patient already has an ABHA number / address (only that is asked) or not (name, date of birth, mobile)
+  const [hasAbha, setHasAbha] = useState(false);
   const [mobileAccounts, setMobileAccounts] = useState<AbhaAccountItem[]>([]);
   const [selectedAbhaNumber, setSelectedAbhaNumber] = useState("");
 
@@ -122,79 +122,91 @@ export function RegisterPatient() {
     };
   }, [existingPatientId]);
 
+  // Tells an ABHA number from an ABHA address, with a specific message when it is neither.
+  function classifyAbhaId(raw: string): { kind: "link_number" | "link_address" } | { error: MappedErrorState } {
+    const id = raw.trim();
+    if (!id) return { error: { tone: "error", title: "ABHA number needed", body: "Enter the patient's 14-digit ABHA number or their ABHA address." } };
+    if (/^[\d\s-]+$/.test(id)) {
+      const digits = id.replace(/\D/g, "").length;
+      if (digits !== 14) {
+        return { error: { tone: "error", title: "Invalid ABHA number", body: `The ABHA number has ${digits} digit${digits === 1 ? "" : "s"}, but it needs 14, for example 91-1234-5678-9012.` } };
+      }
+      return { kind: "link_number" };
+    }
+    if (id.includes("@") && !/@(sbx|abdm)$/i.test(id)) {
+      return {
+        error: {
+          tone: "error",
+          title: "That is not an ABHA address",
+          body: "An ABHA address ends with @sbx (sandbox) or @abdm (production), for example name@sbx.",
+        },
+      };
+    }
+    if (!/^[A-Za-z0-9._]{3,40}(@(sbx|abdm))?$/i.test(id)) {
+      return { error: { tone: "error", title: "Invalid ABHA address", body: "Enter the ABHA address, for example name@sbx: 3 to 40 letters, digits, dots or underscores." } };
+    }
+    return { kind: "link_address" };
+  }
+
   // Step 1: Create patient
   async function handleSavePatient() {
     setErrorState(null);
-    const name = form.name.trim();
     const abhaId = form.abhaId.trim();
-    if (!name && !abhaId) {
-      setErrorState({ tone: "error", title: "Enter a name or an ABHA", body: "Fill in the patient's name, or their ABHA number / ABHA address." });
-      return;
-    }
-    // An ABHA number / address is unique to one person, so it needs no date of birth. A name does: it is
-    // what tells apart people who share a name or a mobile number.
-    if (name && !form.dob) {
-      setErrorState({
-        tone: "error",
-        title: "Date of birth is required",
-        body: "When registering by name, the date of birth is needed to tell patients apart and is checked against the ABHA before it is linked.",
-      });
-      return;
-    }
-    if (form.dob && form.dob > new Date().toISOString().slice(0, 10)) {
-      setErrorState({ tone: "error", title: "Invalid date of birth", body: "Date of birth cannot be in the future." });
-      return;
-    }
     let abhaKind: "link_number" | "link_address" | null = null;
-    if (abhaId) {
-      if (/^[\d\s-]+$/.test(abhaId)) {
-        if (abhaId.replace(/\D/g, "").length !== 14) {
-          setErrorState({ tone: "error", title: "Invalid ABHA number", body: "ABHA number must be 14 digits, for example 91-1234-5678-9012." });
-          return;
-        }
-        abhaKind = "link_number";
-      } else {
-        if (abhaId.includes("@") && !/@(sbx|abdm)$/i.test(abhaId)) {
-          setErrorState({
-            tone: "error",
-            title: "That is not an ABHA address",
-            body: "An ABHA address ends with @sbx (sandbox) or @abdm (production), for example name@sbx.",
-          });
-          return;
-        }
-        if (!/^[A-Za-z0-9._]{3,40}(@(sbx|abdm))?$/i.test(abhaId)) {
-          setErrorState({ tone: "error", title: "Invalid ABHA address", body: "Enter the ABHA address, for example name@sbx." });
-          return;
-        }
-        abhaKind = "link_address";
+
+    if (hasAbha) {
+      // An ABHA number / address is unique to one person: no name, date of birth or mobile is needed.
+      const found = classifyAbhaId(abhaId);
+      if ("error" in found) {
+        setErrorState(found.error);
+        return;
+      }
+      abhaKind = found.kind;
+    } else {
+      if (!form.name.trim()) {
+        setErrorState({ tone: "error", title: "Name is required", body: "Enter the patient's full name." });
+        return;
+      }
+      if (!form.dob) {
+        setErrorState({
+          tone: "error",
+          title: "Date of birth is required",
+          body: "When registering by name, the date of birth is needed to tell patients apart and is checked against the ABHA before it is linked.",
+        });
+        return;
+      }
+      if (form.dob > new Date().toISOString().slice(0, 10)) {
+        setErrorState({ tone: "error", title: "Invalid date of birth", body: "Date of birth cannot be in the future." });
+        return;
+      }
+      const mobileIssue = mobileProblem(form.mobile);
+      if (mobileIssue) {
+        setErrorState({ tone: "error", title: form.mobile.trim() ? "Wrong mobile number" : "Mobile number needed", body: mobileIssue });
+        return;
       }
     }
-    const mobileIssue = mobileProblem(form.mobile);
-    if (mobileIssue) {
-      setErrorState({ tone: "error", title: form.mobile.trim() ? "Wrong mobile number" : "Mobile number needed", body: mobileIssue });
-      return;
-    }
-    const cleanMobile = form.mobile.trim();
 
     setLoading(true);
     try {
-      const res = await createPatient({
-        ...(name ? { name } : {}),
-        phone: cleanMobile,
-        ...(form.email.trim() ? { email: form.email.trim() } : {}),
-        ...(form.dob ? { dateOfBirth: form.dob } : {}),
-      });
-      const createdId = res.data.id;
-      setPatientId(createdId);
-      setLinkMobileNumber(cleanMobile);
+      const res = await createPatient(
+        hasAbha
+          ? {}
+          : {
+              name: form.name.trim(),
+              phone: form.mobile.trim(),
+              dateOfBirth: form.dob,
+              ...(form.email.trim() ? { email: form.email.trim() } : {}),
+            },
+      );
+      setPatientId(res.data.id);
       if (abhaKind) {
         // the ABHA is already known: go straight to linking it
         if (abhaKind === "link_number") setAbhaNumber(abhaId.replace(/[^\d-]/g, "").slice(0, 17));
         else setAbhaAddressInput(abhaId);
         setMode(abhaKind);
-        setMustMatchMobile(true);
         setStep(3);
       } else {
+        setLinkMobileNumber(form.mobile.trim());
         setStep(2);
       }
     } catch (err) {
@@ -395,7 +407,6 @@ export function RegisterPatient() {
             otp: cleanOtp,
             channel,
             environment,
-            ...(mustMatchMobile ? { requireMobileMatch: true } : {}),
           });
           setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
           setStep(5);
@@ -405,7 +416,6 @@ export function RegisterPatient() {
             otp: cleanOtp,
             channel,
             environment,
-            ...(mustMatchMobile ? { requireMobileMatch: true } : {}),
           });
           setLinked({ abhaNumber: res.data.abhaNumber, abhaAddress: res.data.abhaAddress, mobileMatchesRecord: res.data.mobileMatchesRecord });
           setStep(5);
@@ -509,12 +519,42 @@ export function RegisterPatient() {
         {step === 1 && (
           <div className="card-form">
             <h2>Patient details</h2>
-            <p className="lead">The patient record is saved when you continue, so you can add an ABHA next.</p>
+            <p className="lead">
+              {hasAbha
+                ? "Enter the ABHA number or address. You will verify it with an OTP on the next screens."
+                : "The patient record is saved when you continue, so you can add an ABHA next."}
+            </p>
             {errorState && (
               <div style={{ marginBottom: 14 }}>
                 <StopState {...errorState} />
               </div>
             )}
+            <div className="seg" style={{ marginBottom: 16 }}>
+              <button type="button" className={hasAbha ? "on" : ""} onClick={() => { setHasAbha(true); setErrorState(null); }} disabled={loading}>
+                Has an ABHA number
+              </button>
+              <button type="button" className={!hasAbha ? "on" : ""} onClick={() => { setHasAbha(false); setErrorState(null); }} disabled={loading}>
+                No ABHA number
+              </button>
+            </div>
+            {hasAbha ? (
+              <div className="field">
+                <label>ABHA number / ABHA address</label>
+                <input
+                  className="input mono"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  placeholder="91-1234-5678-9012 or name@sbx"
+                  value={form.abhaId}
+                  onChange={(e) => set("abhaId", e.target.value.replace(/[^A-Za-z0-9._@\- ]/g, "").slice(0, 50))}
+                  disabled={loading}
+                />
+                <div className="hint">
+                  An ABHA is unique to one person, so nothing else is needed. Name, date of birth and mobile number are taken from the ABHA once it is linked.
+                </div>
+              </div>
+            ) : (
+              <>
             <div className="field">
               <label>Full name</label>
               <input
@@ -525,26 +565,9 @@ export function RegisterPatient() {
                 disabled={loading}
               />
             </div>
-            <div className="field">
-              <label>ABHA number / ABHA address</label>
-              <input
-                className="input mono"
-                autoComplete="off"
-                autoCapitalize="none"
-                placeholder="91-1234-5678-9012 or name@sbx"
-                value={form.abhaId}
-                onChange={(e) => set("abhaId", e.target.value.replace(/[^A-Za-z0-9._@\- ]/g, "").slice(0, 50))}
-                disabled={loading}
-              />
-              <div className="hint">
-                Fill in the name, the ABHA, or both. An ABHA is unique to one person, so with it alone no date of birth is needed.
-              </div>
-            </div>
             <div className="row">
               <div className="field" style={{ width: 170 }}>
-                <label>
-                  Date of birth {!form.name.trim() && <span className="opt">(optional without a name)</span>}
-                </label>
+                <label>Date of birth</label>
                 <input
                   className="input"
                   type="date"
@@ -585,9 +608,6 @@ export function RegisterPatient() {
                   disabled={loading}
                 />
               </div>
-              {form.abhaId.trim() && (
-                <div className="hint">When an ABHA is entered, this must be the mobile number registered on that ABHA.</div>
-              )}
             </div>
             <div className="field">
               <label>
@@ -600,12 +620,14 @@ export function RegisterPatient() {
                 disabled={loading}
               />
             </div>
+              </>
+            )}
             <div className="form-actions">
               <button className="btn-link" type="button" onClick={() => navigate("/")} disabled={loading}>
                 Cancel
               </button>
               <button className="btn btn-primary" type="button" onClick={handleSavePatient} disabled={loading}>
-                {loading ? "Saving..." : "Save and continue"}
+                {loading ? "Saving..." : hasAbha ? "Continue" : "Save and continue"}
               </button>
             </div>
           </div>

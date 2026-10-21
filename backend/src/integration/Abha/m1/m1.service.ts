@@ -152,7 +152,14 @@ const linkAbhaToPatient = async (
     if (abhaName) await prisma.patient.update({ where: { id: patientId }, data: { name: abhaName } });
   }
 
-  return { ...abhaPatient, mobileMatchesRecord: mobileMatchesRecord(patient.phone, demographics.mobile) };
+  // Registered with an ABHA alone, so no mobile number yet: take the ABHA's (nothing to compare it with).
+  const noPhoneYet = patient.phone === "";
+  if (noPhoneYet) {
+    const abhaMobile = last10(String(demographics.mobile ?? ""));
+    if (/^[6-9]\d{9}$/.test(abhaMobile)) await prisma.patient.update({ where: { id: patientId }, data: { phone: abhaMobile } });
+  }
+
+  return { ...abhaPatient, mobileMatchesRecord: noPhoneYet ? undefined : mobileMatchesRecord(patient.phone, demographics.mobile) };
 };
 
 const last10 = (value: string) => digitsOnly(value).slice(-10);

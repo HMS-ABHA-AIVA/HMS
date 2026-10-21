@@ -56,10 +56,17 @@ describe("Patients can share a mobile number", () => {
     }
   });
 
-  it("registers from an ABHA alone: no name, no date of birth", async () => {
-    const r = await create({ phone: "9000000003" });
+  it("registers from an ABHA alone: no name, no date of birth, no mobile", async () => {
+    const r = await create({});
     assert.equal(r.status, 201, JSON.stringify(r.json));
     assert.equal(r.json.data.name, "Name pending (from ABHA)");
     assert.equal(r.json.data.dateOfBirth, null);
+    assert.equal(r.json.data.phone, "");
+  });
+
+  it("still needs a mobile number when a name is given", async () => {
+    const r = await create({ name: "Test Person", dateOfBirth: "1990-01-01" });
+    assert.equal(r.status, 400, JSON.stringify(r.json));
+    assert.match(String(r.json.message), /Enter the 10-digit mobile number/);
   });
 });

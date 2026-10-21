@@ -74,7 +74,7 @@ export interface BackendPatient {
   createdAt: string;
 }
 
-export const createPatient = (body: { name?: string; phone: string; email?: string; dateOfBirth?: string }) =>
+export const createPatient = (body: { name?: string; phone?: string; email?: string; dateOfBirth?: string }) =>
   post<Envelope<BackendPatient>>('/patient/create', body);
 
 /** A patient as returned by GET /patient, with their ABHA record when linked. */
